@@ -35,6 +35,11 @@ def redact_secrets(
     return event_dict
 
 
+def _stderr_logger(*_args: Any) -> structlog.PrintLogger:
+    # Resolve sys.stderr per logger so redirected/replaced streams are honoured.
+    return structlog.PrintLogger(file=sys.stderr)
+
+
 def configure_logging(level: str = "INFO") -> None:
     log_level = logging.getLevelNamesMapping()[level.upper()]
     logging.basicConfig(format="%(message)s", stream=sys.stderr, level=log_level)
@@ -48,7 +53,7 @@ def configure_logging(level: str = "INFO") -> None:
             structlog.processors.JSONRenderer(),
         ],
         wrapper_class=structlog.make_filtering_bound_logger(log_level),
-        logger_factory=structlog.PrintLoggerFactory(file=sys.stderr),
+        logger_factory=_stderr_logger,
         cache_logger_on_first_use=False,
     )
 
