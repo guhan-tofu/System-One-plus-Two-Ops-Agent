@@ -1,4 +1,4 @@
-"""Shared HTTP machinery for Jev providers (thejevai.com, Vercel AI Gateway).
+"""Shared HTTP machinery for HTTP Jev providers (currently Vercel AI Gateway).
 
 - Retries 429/529 (plus any provider-specific `retry_statuses`), exponential
   backoff with jitter, max 4 attempts.
@@ -127,8 +127,6 @@ class HTTPJevProvider(ABC):
             model_verified=result.model_verified,
             questions=sorted(request.questions),
             latency_ms=round(latency_ms, 1),
-            vendor_elapsed_ms=result.vendor_elapsed_ms,
-            credits_used=result.credits_used,
             metadata=result.metadata,
         )
         return result

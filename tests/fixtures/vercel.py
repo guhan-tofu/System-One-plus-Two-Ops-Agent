@@ -3,7 +3,10 @@
 from __future__ import annotations
 
 import copy
+import json
 from typing import Any
+
+import httpx
 
 GATEWAY_URL = "https://gateway.test/v4/ai"
 EVAL_URL = f"{GATEWAY_URL}/evaluation-model"
@@ -55,3 +58,40 @@ def gateway_response(
 
 def gateway_error(message: str, error_type: str = "invalid_request_error") -> dict[str, Any]:
     return {"error": {"message": message, "type": error_type}}
+
+
+def answer_request(
+    request: httpx.Request,
+    *,
+    picks: dict[str, str] | None = None,
+    boolean: dict[str, float] | None = None,
+    p: float = 0.9,
+) -> httpx.Response:
+    """Answer whatever evaluation request was sent, in the confirmed gateway shape.
+
+    Choice questions get `picks[qid]` (default: the first option) with probability p;
+    score questions put all mass on level 1; boolean questions get `boolean[qid]`
+    (default 0.1).
+    """
+    questions = json.loads(request.content)["questions"]
+    answers: dict[str, Any] = {}
+    for qid, q in questions.items():
+        if q["type"] == "choice":
+            options = list(q["criteria"])
+            pick = (picks or {}).get(qid, options[0])
+            rest = (1 - p) / (len(options) - 1)
+            answers[qid] = {
+                "type": "choice",
+                "choice": pick,
+                "probabilities": {o: p if o == pick else rest for o in options},
+            }
+        elif q["type"] == "score":
+            levels = len(q["criteria"])
+            answers[qid] = {
+                "type": "score",
+                "score": 1.0,
+                "probabilities": {str(i): 1.0 if i == 1 else 0.0 for i in range(levels)},
+            }
+        else:
+            answers[qid] = {"type": "boolean", "probability": (boolean or {}).get(qid, 0.1)}
+    return httpx.Response(200, json={"answers": answers, "warnings": []})

@@ -50,7 +50,7 @@ def test_payload_wire_format() -> None:
         state={"subject": "hi"},
         questions={"a": noul("q?"), "b": noul("q?", {"true": "y", "false": "n"})},
     )
-    assert req.to_payload() == {
+    assert req.model_dump(mode="json", exclude_none=True) == {
         "model": "jev-latest",
         "state": {"subject": "hi"},
         "questions": {

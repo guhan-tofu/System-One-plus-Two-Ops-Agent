@@ -48,7 +48,7 @@ def version() -> None:
 
 @app.command()
 def probe(
-    model: Annotated[str | None, typer.Option(help="Override JEV_MODEL.")] = None,
+    model: Annotated[str | None, typer.Option(help="Override JEV_GATEWAY_MODEL.")] = None,
 ) -> None:
     """Make one live Jev call with fake data and print the raw response shape."""
     settings = get_settings()

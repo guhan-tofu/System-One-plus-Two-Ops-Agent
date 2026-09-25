@@ -21,8 +21,8 @@ AI SDK's EvaluationModelV4 contract:
       }
     }
 
-Differences from thejevai.com: yes/no questions are `boolean` (answer `probability`)
-rather than `noul`; no envelope; no score legend (rebuilt from the question);
+Mapping to our models: yes/no questions are `boolean` on the wire (answer
+`probability`) and `noul` in ours; the score legend is rebuilt from the question;
 confidence lives in provider metadata (computed with Jev's own formulas if absent).
 The gateway returns no versioned model ID, so the requested ID is audited with
 `model_verified=False`, alongside the generation ID and the upstream provider.

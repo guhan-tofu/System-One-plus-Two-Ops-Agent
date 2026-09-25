@@ -11,9 +11,7 @@ def test_defaults() -> None:
     assert s.jev_provider == "vercel"
     assert s.jev_gateway_model == "typesafe-ai/jev"
     assert s.ai_gateway_api_key.get_secret_value() == ""
-    assert s.jev_model == "jev-latest"
     assert s.database_url.startswith("sqlite")
-    assert s.jev_api_key.get_secret_value() == ""
     assert s.jev_fallback_tier == "fast"
     assert str(s.model_tiers_path) == "policies/model_tiers.yaml"
 
@@ -26,17 +24,18 @@ def test_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:
     assert s.openai_model_fast == "fake-fast-model"
 
 
-def test_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JEV_PROVIDER", "mystery")
+@pytest.mark.parametrize("name", ["mystery", "thejevai"])
+def test_rejects_unknown_provider(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+    monkeypatch.setenv("JEV_PROVIDER", name)
     with pytest.raises(ValidationError):
         Settings()
 
 
 def test_secrets_not_in_repr(monkeypatch: pytest.MonkeyPatch) -> None:
     fake = "fake-test-value-not-a-real-key"  # pragma: allowlist secret
-    monkeypatch.setenv("JEV_API_KEY", fake)
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", fake)
     monkeypatch.setenv("OPENAI_API_KEY", fake)
     s = Settings()
     assert fake not in repr(s)
     assert fake not in str(s.model_dump())
-    assert s.jev_api_key.get_secret_value() == fake
+    assert s.ai_gateway_api_key.get_secret_value() == fake
