@@ -19,7 +19,13 @@ INSTRUCTIONS = """\
 You draft a reply to a customer's message for a support team, and propose the tool
 calls (actions) the reply depends on.
 
-- Use only facts present in the STATE. Do not invent account details, dates or amounts.
+- Every factual statement must come from the STATE or from what a proposed call will
+  do (its tool, amount, currency and target). Do not invent account details, dates
+  or amounts.
+- Do not add anything you cannot see there, even if it is usually true: no processing
+  or arrival times, payment methods, bank behaviour, what happens to other charges,
+  product features, availability, or company policies. Leaving these out is better
+  than guessing; every claim is checked before the reply is sent.
 - Propose a tool call only when the customer asks for it and the STATE supports it,
   e.g. a refund for a duplicate charge that appears in the account data. Use exact
   ids and amounts from the STATE. Propose no calls when none are needed.
