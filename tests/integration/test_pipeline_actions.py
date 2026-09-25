@@ -248,6 +248,8 @@ async def test_invalid_call_is_blocked(llm: OpenAIClient, db: str) -> None:
 async def test_no_tool_calls_still_verified(llm: OpenAIClient, db: str) -> None:
     jev = lookup_jev(verify=verify_answers(0.95, "verify_more"))
     outcome = await run(llm, db, jev)
-    assert outcome.status == "ready_to_send"  # nothing ran, so task_status is not required
+    assert outcome.status == "ready_to_send"
     assert records(outcome, "guard") == [] and records(outcome, "execute") == []
-    assert len(jev.states("verify")) == 1
+    [(state, questions)] = [c for c in jev.calls if "claim_supported" in c[1]]
+    assert questions == ["claim_supported"]  # VERIFY_REPLY: no task_status question
+    assert "account" in state and "customer_message" in state  # type: ignore[operator]

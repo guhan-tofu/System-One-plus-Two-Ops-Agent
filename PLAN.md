@@ -251,6 +251,15 @@ VERIFY = {
         },
     ),
 }
+
+# When no tools ran, verify uses this instead (VERIFY's "supported by
+# tool_results" is ill-posed with empty results and flags harmless replies).
+VERIFY_REPLY = {
+    "claim_supported": noul(
+        "Is every factual claim in `draft` supported by `account` or `customer_message`? "
+        "Questions and offers of help are not factual claims."
+    ),
+}
 ```
 
 ## 8. Decision policy (policies/thresholds.yaml)

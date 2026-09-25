@@ -61,7 +61,7 @@ def test_verify_claim_threshold(supported: float, escalate: bool) -> None:
         ([ok()], "complete", False),
         ([ok()], "verify_more", True),
         ([ok()], "failed", True),
-        ([], "verify_more", False),  # no actions taken: only the claim is checked
+        ([], "verify_more", False),  # no actions taken: task_status is not used
     ],
 )
 def test_verify_task_status(results: list[ToolResult], status: str, escalate: bool) -> None:
@@ -73,3 +73,18 @@ def test_failed_tool_escalates_even_if_jev_is_satisfied() -> None:
     d = decide_verify([failed()], jev_result(verify_answers(1.0, "complete")), VERIFY)
     assert d.escalate
     assert d.escalate_reasons == ["execute: issue_refund failed (charge not found)"]
+
+
+def test_no_tools_uses_reply_question_without_task_status() -> None:
+    from sentinel.agent.verify import questions_for
+    from sentinel.jev.models import NoulAnswer
+    from sentinel.jev.questions import VERIFY as VERIFY_QUESTIONS
+    from sentinel.jev.questions import VERIFY_REPLY
+
+    assert questions_for([]) is VERIFY_REPLY and questions_for([ok()]) is VERIFY_QUESTIONS
+    assert set(VERIFY_REPLY) == {"claim_supported"}
+    reply_only = jev_result({"claim_supported": NoulAnswer(type="noul", noul=0.9)})
+    d = decide_verify([], reply_only, VERIFY)
+    assert not d.escalate and d.task_status is None
+    low = jev_result({"claim_supported": NoulAnswer(type="noul", noul=0.5)})
+    assert decide_verify([], low, VERIFY).escalate

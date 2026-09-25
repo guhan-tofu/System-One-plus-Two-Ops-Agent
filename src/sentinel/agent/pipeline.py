@@ -389,7 +389,8 @@ class Pipeline:
             return failed
         try:
             result, primary_error = await self._ask(
-                verify.QUESTIONS, redact(verify.verify_state(state, run.draft or "", results))
+                verify.questions_for(results),
+                redact(verify.verify_state(state, run.draft or "", results)),
             )
         except JevError as exc:
             run.stage("verify", "error", error=_describe(exc))

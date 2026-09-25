@@ -2,7 +2,9 @@
 
 Deterministic first: any failed tool escalates, whatever Jev says. Then Jev
 (PLAN.md section 8): claim_supported >= threshold, and, when tools ran,
-task_status == complete.
+task_status == complete. When no tools ran, Jev gets VERIFY_REPLY instead, which
+checks the draft against the account data and the customer's message (asking
+about empty tool results would flag harmless replies such as follow-up questions).
 """
 
 from __future__ import annotations
@@ -11,12 +13,14 @@ from typing import Any
 
 from pydantic import BaseModel, ConfigDict
 
-from sentinel.jev.models import JevResult
-from sentinel.jev.questions import VERIFY
+from sentinel.jev.models import JevResult, Question
+from sentinel.jev.questions import VERIFY, VERIFY_REPLY
 from sentinel.policy.engine import VerifyPolicy
 from sentinel.tools.registry import ToolResult
 
-QUESTIONS = VERIFY
+
+def questions_for(results: list[ToolResult]) -> dict[str, Question]:
+    return VERIFY if results else VERIFY_REPLY
 
 
 class VerifyDecision(BaseModel):
@@ -52,7 +56,7 @@ def decide_verify(
 ) -> VerifyDecision:
     reasons = failed_tools(results)
     supported = result.noul("claim_supported").noul
-    status = result.choice("task_status").choice
+    status = result.choice("task_status").choice if results else None
     if supported < policy.claim_supported_min:
         reasons.append(f"verify.claim_supported {supported:.3f} < {policy.claim_supported_min}")
     if results and status != "complete":

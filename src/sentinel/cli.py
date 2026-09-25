@@ -174,7 +174,8 @@ def _stage_summary(record: StageRecord) -> str:
                 return "failed tool -> escalate (Jev not asked)"
             if "decision" in d:
                 v = d["decision"]
-                return f"claim_supported={v['claim_supported']:.2f}  task_status={v['task_status']}"
+                status = f"  task_status={v['task_status']}" if v["task_status"] else ""
+                return f"claim_supported={v['claim_supported']:.2f}{status}"
         case "decide":
             cost = d.get("total_cost_usd")
             cost_s = "unknown" if cost is None else f"${cost:.5f}"
