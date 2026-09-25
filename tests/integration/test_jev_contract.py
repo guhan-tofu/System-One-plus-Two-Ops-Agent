@@ -28,11 +28,10 @@ from sentinel.jev.errors import (
 )
 from sentinel.jev.models import ChoiceQuestion, JevResult, ScoreQuestion
 from sentinel.jev.provider import JevProvider, build_provider
-from tests.fixtures.jev import QUESTIONS, confirmed_response
+from tests.fixtures.jev import QUESTIONS
 from tests.fixtures.openai import FAST_RETRY, RESPONSES_URL, error_body, judge, response_body
 from tests.fixtures.vercel import EVAL_URL, GATEWAY_URL, gateway_error, gateway_response
 
-JEV_URL = "https://jev.test/v1/systemone"
 FAKE_KEY = "fake-key-for-contract-tests"  # pragma: allowlist secret
 
 
@@ -44,29 +43,21 @@ class Backend:
     key_var: str
 
     def ok(self) -> Any:
-        if self.name == "thejevai":
-            return httpx.Response(200, json=confirmed_response())
         if self.name == "vercel":
             return httpx.Response(200, json=gateway_response())
         return judge
 
     def status(self, code: int) -> httpx.Response:
-        if self.name == "thejevai":
-            return httpx.Response(code)
         if self.name == "vercel":
             return httpx.Response(code, json=gateway_error("error", "error"))
         return httpx.Response(code, headers=FAST_RETRY, json=error_body("error"))
 
     def invalid(self, field: str) -> httpx.Response:
-        if self.name == "thejevai":
-            return httpx.Response(422, json={"error": {"message": "bad", "param": field}})
         if self.name == "vercel":
             return httpx.Response(400, json={"error": {"message": "bad", "param": field}})
         return httpx.Response(400, json=error_body("bad", param=field))
 
     def garbage(self) -> httpx.Response:
-        if self.name == "thejevai":
-            return httpx.Response(200, text="<html>")
         if self.name == "vercel":
             return httpx.Response(200, json={"error": "not an evaluation"})
         return httpx.Response(200, json=response_body("not json"))
@@ -78,12 +69,6 @@ BACKENDS = {
         url=EVAL_URL,
         env={"AI_GATEWAY_API_KEY": FAKE_KEY, "AI_GATEWAY_BASE_URL": GATEWAY_URL},
         key_var="AI_GATEWAY_API_KEY",
-    ),
-    "thejevai": Backend(
-        name="thejevai",
-        url=JEV_URL,
-        env={"JEV_API_KEY": FAKE_KEY, "JEV_BASE_URL": JEV_URL},
-        key_var="JEV_API_KEY",
     ),
     "llm_fallback": Backend(
         name="llm_fallback",

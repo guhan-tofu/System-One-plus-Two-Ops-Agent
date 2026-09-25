@@ -1,9 +1,8 @@
 """Request/response models for Jev (System One).
 
-Wire format (confirmed by `sentinel probe`, see `sentinel.jev.parsing`):
-    request:  {"model": str, "state": str | object | [str], "questions": {id: Question}}
-    response: {"code": 0, "message": "ok",
-               "data": {"creditsUsed", "result": {"answers": {id: Answer}, "usage", "elapsedMs"}}}
+`JevRequest` holds what we ask; each provider maps it to its own wire format
+(see `sentinel.jev.vercel` for the official Jev via Vercel AI Gateway).
+`JevResult` is the provider-independent answer the pipeline consumes.
 """
 
 from __future__ import annotations
@@ -79,8 +78,6 @@ class JevRequest(_Frozen):
     state: State
     questions: dict[str, Question] = Field(min_length=1)
 
-    def to_payload(self) -> dict[str, Any]:
-        return self.model_dump(mode="json", exclude_none=True)
 
 
 # --- answers -----------------------------------------------------------------
@@ -122,16 +119,13 @@ class JevResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     provider: str
-    """Which JevProvider answered, e.g. "thejevai" or "llm_fallback"."""
+    """Which JevProvider answered, e.g. "vercel" or "llm_fallback"."""
     model: str
     """Model ID to audit: the vendor's if it returned one, else the one we requested."""
     model_verified: bool
-    """True only if the provider reported the model ID. thejevai.com currently does not."""
+    """True only if the provider reported a versioned model ID (Vercel AI Gateway does not)."""
     answers: dict[str, Answer]
     usage: dict[str, Any] | None = None
-    credits_used: float | None = None
-    vendor_elapsed_ms: float | None = None
-    """Timing as reported by the vendor (informational; untrusted)."""
     latency_ms: float
     """Client-side wall-clock latency (authoritative for evals)."""
     metadata: dict[str, Any] = Field(default_factory=dict)

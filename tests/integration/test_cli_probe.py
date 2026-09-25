@@ -7,59 +7,49 @@ import respx
 from typer.testing import CliRunner
 
 from sentinel.cli import app
-from tests.fixtures.jev import confirmed_response
+from tests.fixtures.vercel import EVAL_URL, GATEWAY_MODEL, GATEWAY_URL, answer_request
 
-URL = "https://jev.test/v1/systemone"
-FAKE_KEY = "fake-jev-key-for-tests"  # pragma: allowlist secret
-
-PROBE_ANSWERS = {
-    "probe_choice": {
-        "type": "choice",
-        "choice": "technical",
-        "probabilities": {"technical": 0.8, "billing": 0.2},
-        "confidence": 0.8,
-    },
-    "probe_score": {
-        "type": "score",
-        "score": 1.0,
-        "legend": {"0": "Not urgent", "1": "Soon", "2": "Today"},
-        "probabilities": {"0": 0.2, "1": 0.6, "2": 0.2},
-        "confidence": 0.6,
-    },
-    "probe_noul": {"type": "noul", "noul": 0.01},
-}
+FAKE_KEY = "fake-gateway-key-for-tests"  # pragma: allowlist secret
 
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("JEV_PROVIDER", "thejevai")
-    monkeypatch.setenv("JEV_API_KEY", FAKE_KEY)
-    monkeypatch.setenv("JEV_BASE_URL", URL)
+    monkeypatch.setenv("AI_GATEWAY_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("AI_GATEWAY_BASE_URL", GATEWAY_URL)
 
 
-def run_probe() -> tuple[int, str]:
-    result = CliRunner().invoke(app, ["probe"])
+def run_probe(*args: str) -> tuple[int, str]:
+    result = CliRunner().invoke(app, ["probe", *args])
     return result.exit_code, result.stdout
 
 
 @respx.mock
 def test_probe_prints_shape_and_raw() -> None:
-    respx.post(URL).respond(200, json=confirmed_response(PROBE_ANSWERS))
+    respx.post(EVAL_URL).mock(side_effect=answer_request)
     code, out = run_probe()
     assert code == 0
     report = json.loads(out)
     assert report["parse"] == "ok"
-    assert report["audited_model"] == "jev-latest"
+    assert report["provider"] == "vercel"
+    assert report["audited_model"] == GATEWAY_MODEL
     assert report["model_verified"] is False
-    assert report["shape"]["result_keys"] == ["answers", "elapsedMs", "usage"]
-    raw_answers = report["raw_response"]["data"]["result"]["answers"]
-    assert raw_answers["probe_noul"] == {"type": "noul", "noul": 0.01}
+    assert report["shape"]["answer_fields"]["probe_noul"] == ["probability", "type"]
+    raw_answers = report["raw_response"]["answers"]
+    assert raw_answers["probe_noul"] == {"type": "boolean", "probability": 0.1}
     assert FAKE_KEY not in out
 
 
 @respx.mock
+def test_probe_model_override() -> None:
+    route = respx.post(EVAL_URL).mock(side_effect=answer_request)
+    code, _ = run_probe("--model", "typesafe-ai/jev-next")
+    assert code == 0
+    assert route.calls.last.request.headers["ai-model-id"] == "typesafe-ai/jev-next"
+
+
+@respx.mock
 def test_probe_reports_unparseable_shape() -> None:
-    respx.post(URL).respond(200, json={"data": {"something": "else"}})
+    respx.post(EVAL_URL).respond(200, json={"data": {"something": "else"}})
     code, out = run_probe()
     assert code == 1
     report = json.loads(out)
@@ -69,10 +59,19 @@ def test_probe_reports_unparseable_shape() -> None:
 
 @respx.mock
 def test_probe_http_error() -> None:
-    respx.post(URL).respond(401)
+    respx.post(EVAL_URL).respond(401)
     assert run_probe()[0] == 1
 
 
 def test_probe_without_key(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.delenv("JEV_API_KEY")
+    monkeypatch.delenv("AI_GATEWAY_API_KEY")
     assert run_probe()[0] == 1
+
+
+def test_probe_needs_an_http_provider(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JEV_PROVIDER", "llm_fallback")
+    monkeypatch.setenv("OPENAI_API_KEY", FAKE_KEY)
+    monkeypatch.setenv("OPENAI_MODEL_FAST", "fake-fast")
+    result = CliRunner().invoke(app, ["probe"])
+    assert result.exit_code == 1
+    assert "HTTP Jev provider" in result.output

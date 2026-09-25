@@ -1,7 +1,8 @@
 """The `JevProvider` interface and the factory that picks an implementation.
 
-Everything that talks to System One goes through here, so the vendor can be
-swapped (Vercel AI Gateway -> thejevai -> OpenAI emulation) with a config change.
+Everything that talks to System One goes through here, so the provider can be
+swapped with a config change: official Jev via Vercel AI Gateway (default), OpenAI
+emulation (`llm_fallback`), or a future direct TypeSafe API.
 """
 
 from __future__ import annotations
@@ -35,10 +36,6 @@ def build_provider(settings: Settings) -> JevProvider:
             from sentinel.jev.vercel import VercelJevProvider
 
             return VercelJevProvider.from_settings(settings)
-        case "thejevai":
-            from sentinel.jev.thejevai import TheJevAIProvider
-
-            return TheJevAIProvider.from_settings(settings)
         case "typesafe":
             from sentinel.jev.typesafe import TypeSafeProvider
 

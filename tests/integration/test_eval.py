@@ -183,15 +183,15 @@ def test_cli_eval_writes_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch)
 
     result = CliRunner().invoke(
         app,
-        ["eval", "--provider", "vercel", "--provider", "thejevai", "--limit", "6",
+        ["eval", "--provider", "vercel", "--provider", "typesafe", "--limit", "6",
          "--out", str(tmp_path)],
     )  # fmt: skip
 
     assert result.exit_code == 0, result.output
     [report] = list(tmp_path.glob("*-triage.md"))
     md = report.read_text()
-    assert "| | vercel | thejevai |" in md
-    assert "| Errors | 0/6 | 6/6 |" in md  # thejevai has no key here
+    assert "| | vercel | typesafe |" in md
+    assert "| Errors | 0/6 | 6/6 |" in md  # typesafe (direct API) is not implemented
     assert "provider not available" in md
     assert "fake-gateway-key" not in md
     assert "vercel: errors 0/6" in result.stdout

@@ -4,7 +4,7 @@ import pytest
 
 from sentinel.jev.confidence import choice_confidence, score_confidence
 
-# (probabilities, confidence) pairs observed from live thejevai.com responses
+# (probabilities, confidence) pairs observed from live Jev responses
 # (2026-09-25). The vendor computes confidence from unrounded probabilities but
 # shows both rounded to 2 decimals; on longer scales that input rounding moves the
 # expected distance by a few hundredths, hence the tolerance.

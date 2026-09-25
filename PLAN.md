@@ -25,9 +25,8 @@ Guiding rule: *Jev decides which path, the LLM does the work, code pulls the tri
 - `.env.example` is committed with empty values only.
 - Jev provider (default, `JEV_PROVIDER=vercel`): **official TypeSafe Jev
   (`typesafe-ai/jev`) through Vercel AI Gateway**. The gateway reports which upstream
-  answered (`finalProvider`) and a `generationId`; both are audited. Fallbacks:
-  **thejevai.com** (independent reseller, untrusted: we cannot verify which model
-  answers) and `llm_fallback` (OpenAI emulation). Therefore:
+  answered (`finalProvider`) and a `generationId`; both are audited. Fallback:
+  `llm_fallback` (OpenAI emulation). Therefore:
   - Everything goes through a `JevProvider` interface so providers swap with a
     config change.
   - Redact PII from state before sending (emails, phone numbers, card numbers).
@@ -35,10 +34,9 @@ Guiding rule: *Jev decides which path, the LLM does the work, code pulls the tri
 
 ```
 # .env.example
-JEV_API_KEY=
-JEV_BASE_URL=https://thejevai.com/v1/systemone
-JEV_MODEL=jev-latest          # pin a versioned ID once known, e.g. jev-1.13.0
-JEV_PROVIDER=thejevai         # thejevai | typesafe | llm_fallback
+JEV_PROVIDER=vercel           # vercel | typesafe (direct API, later) | llm_fallback
+AI_GATEWAY_API_KEY=           # Vercel AI Gateway key (placeholder if proxy-injected)
+JEV_GATEWAY_MODEL=typesafe-ai/jev
 OPENAI_API_KEY=
 OPENAI_MODEL_FAST=            # cheap tier, set to a current model name
 OPENAI_MODEL_STRONG=          # capable tier
@@ -113,8 +111,11 @@ sentinel/
 │   ├── config.py              # Settings (pydantic-settings)
 │   ├── jev/
 │   │   ├── provider.py        # JevProvider protocol
-│   │   ├── thejevai.py        # HTTP impl for thejevai.com
-│   │   ├── typesafe.py        # stub for official API (later)
+│   │   ├── http.py            # shared HTTP provider base (retries, errors)
+│   │   ├── vercel.py          # official Jev via Vercel AI Gateway (default)
+│   │   ├── typesafe.py        # stub for a direct TypeSafe API (later)
+│   │   ├── resilience.py      # rate limit + circuit breaker wrappers
+│   │   ├── confidence.py      # Jev's confidence formulas
 │   │   ├── llm_fallback.py    # emulates Jev via OpenAI structured output
 │   │   ├── questions.py       # Choice / Score / Noul builders
 │   │   └── models.py          # request/response pydantic models
@@ -159,41 +160,31 @@ Yes/no questions are type `boolean` (answer `probability`) on the wire; we map t
 {confidence}, gateway: {routing: {finalProvider}, cost, generationId}}}`. No versioned
 model ID is returned; the requested ID is audited with `model_verified=false`.
 
-**thejevai.com (fallback), as originally specified:**
-
-Endpoint: `POST {JEV_BASE_URL}` with `Authorization: Bearer <key>`,
-body `{ "model", "state", "questions" }`. `state` is string | object | array of text.
-Questions map keyed by our own IDs; three types:
+Our models (`jev/models.py`) are provider-independent. `state` is string | object |
+array of text; questions are keyed by our own IDs; three types:
 
 - `choice` — `criteria` is a map of option → description (≤255 options).
   Answer: `choice`, `probabilities`, `confidence`.
 - `score` — `criteria` is an ordered low→high array (2–10 levels).
-  Answer: `score` (float), `legend`, `probabilities`, `confidence`.
+  Answer: `score` (expected level index), `legend`, `probabilities`, `confidence`.
 - `noul` — yes/no, optional `criteria: {true, false}`.
-  Answer: `noul` = probability of yes.
+  Answer: `noul` = probability of yes (`boolean`/`probability` on the Vercel wire).
 
 Implementation requirements:
 
 - `JevProvider.evaluate(state, questions, model) -> JevResult` (async).
-- Response parsing must be **defensive**: the vendor docs mention answers possibly
-  nested under `result` and a timing field named `elapsed`/`elapsedMs`. Accept both
-  shapes; Phase 1 includes a live probe to confirm the real shape and lock it in.
-- **Confirmed shape (live probe, 2026-09-25) — parser is locked to this:**
-  `{"code": 0, "message": "ok", "data": {"creditsUsed", "result": {"answers", "usage", "elapsedMs"}}}`.
-  Every answer carries `type`; score `legend`/`probabilities` are keyed by level
-  index as strings (`"0"`, `"1"`, …). Errors use `{"code": -1, "message"}` (e.g. 502
-  for an unknown model). **No model ID is returned** (body or headers): we audit the
-  requested model with `model_verified=false` until the vendor echoes one.
+- Parsers are strict and locked to the live-probed shape; anything unexpected raises,
+  never defaults.
 - **Confidence semantics (fitted to live samples; `jev/confidence.py`)**: choice =
   `(n·p_max − 1)/(n − 1)`; score = `1 − E|level − modal level| / D_n`, where `D_n`
   is the mean distance from the middle level under a uniform distribution. Score
   value = expected level index. `llm_fallback` derives confidence the same way so
   thresholds mean the same thing across providers.
-- Always record the returned `model` field (versioned ID) in the audit log.
-- Retries: exponential backoff with jitter on 429 and 529 only (max 4 attempts);
-  the Vercel provider also retries 503, which the gateway returns for intermittent
-  upstream failures ("try again shortly"; ~50% of calls in the first eval run);
-  no retry on 401/422. 422 errors surface the offending field in the exception.
+- Always record the model ID in the audit log (plus the gateway's `generationId` and
+  `finalProvider`).
+- Retries: exponential backoff with jitter on 429, 503 and 529 (max 4 attempts);
+  the gateway returns 503 "try again shortly" when throttling. No retry on
+  400/401/403/422; validation errors surface the offending field in the exception.
 - Timeouts: 5s connect / 10s read. On final failure → fallback provider or
   human queue (configurable), never silent default answers.
 - One judgment per question. Never pack multiple decisions into one question.
@@ -288,7 +279,8 @@ approval regardless of Jev). Thresholds get tuned from eval data, not by feel.
 *Accept:* `uv run pytest` and `uv run mypy src` pass on empty skeleton.
 
 **Phase 1 — Jev client**
-Models, question builders, `thejevai` provider, retries, defensive parsing.
+Models, question builders, HTTP provider (official Jev via Vercel AI Gateway,
+`jev/vercel.py`), retries, strict parsing.
 `sentinel probe` CLI makes one live call and prints the raw response shape.
 *Accept:* unit tests (respx) for all 3 answer types, 401/422/429/529 paths; live probe
 works; parser locked to confirmed shape.
@@ -312,7 +304,7 @@ human review queue table.
 **Phase 5 — Evals**
 50–200 labeled items in `evals/datasets/`. Metrics: accuracy per question,
 Brier score, calibration table (10 bins), p50/p95 latency, cost per item.
-Compare providers side by side (`vercel`, `llm_fallback`, `thejevai`).
+Compare providers side by side (`vercel`, `llm_fallback`).
 `sentinel eval -p vercel -p llm_fallback [--rate 1]`; code in `src/sentinel/evals/`.
 *Accept:* `sentinel eval` writes a markdown report to `evals/reports/`.
 
@@ -336,10 +328,10 @@ provider in the pipeline), `POST /items` rate limit and size caps,
 
 ## 11. Risks
 
-- **Unofficial provider**: may change, disappear, or not run the real model.
-  Mitigation: provider interface, fallback, eval gate before trusting it.
+- **Provider availability**: the gateway throttles bursts (free tier) and can fail
+  upstream. Mitigation: rate limit, retries, circuit breaker, `llm_fallback`, eval gate.
 - **Data exposure**: third party sees our state. Mitigation: redaction, minimal state.
-- **Version drift** on `jev-latest`: log returned model ID; pin once known;
-  re-run evals on change.
+- **Version drift** on `typesafe-ai/jev` (no versioned ID is returned): log the
+  generation ID and upstream provider; re-run evals on change.
 - **Over-trusting probabilities**: they are signals; deterministic policy stays
   authoritative for anything irreversible.

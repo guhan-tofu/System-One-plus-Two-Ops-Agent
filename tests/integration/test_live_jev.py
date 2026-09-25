@@ -13,14 +13,13 @@ def live_settings(monkeypatch: pytest.MonkeyPatch, provider: str) -> Settings:
     monkeypatch.undo()  # use the developer's real .env / environment for live runs
     get_settings.cache_clear()
     settings = Settings(jev_provider=provider)  # type: ignore[arg-type]
-    key = settings.ai_gateway_api_key if provider == "vercel" else settings.jev_api_key
-    if not key.get_secret_value():
+    if not settings.ai_gateway_api_key.get_secret_value():
         pytest.skip(f"no key configured for {provider}")
     return settings
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("provider", ["vercel", "thejevai"])
+@pytest.mark.parametrize("provider", ["vercel"])
 async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     jev = build_provider(live_settings(monkeypatch, provider))
     try:
