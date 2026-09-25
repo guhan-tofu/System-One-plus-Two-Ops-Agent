@@ -37,7 +37,7 @@ from sentinel.jev.errors import (
     JevValidationError,
 )
 from sentinel.jev.models import JevRequest, JevResult, Question, State
-from sentinel.jev.parsing import PRIMARY_SHAPE, parse_response
+from sentinel.jev.parsing import parse_response, vendor_message
 from sentinel.log import get_logger
 
 log = get_logger(__name__)
@@ -98,18 +98,20 @@ class TheJevAIProvider:
     ) -> JevResult:
         request = self.build_request(state, questions, model)
         raw, latency_ms = await self.post_raw(request)
-        result = parse_response(raw, request.questions, latency_ms=latency_ms)
+        result = parse_response(
+            raw, request.questions, requested_model=request.model, latency_ms=latency_ms
+        )
         log.info(
             "jev.evaluate",
             provider=self.name,
             requested_model=request.model,
-            returned_model=result.model,
+            model=result.model,
+            model_verified=result.model_verified,
             questions=sorted(request.questions),
             latency_ms=round(latency_ms, 1),
-            vendor_timing=result.vendor_timing,
+            vendor_elapsed_ms=result.vendor_elapsed_ms,
+            credits_used=result.credits_used,
         )
-        if result.shape != PRIMARY_SHAPE:
-            log.warning("jev.unexpected_shape", provider=self.name, shape=result.shape)
         return result
 
     async def post_raw(self, request: JevRequest) -> tuple[Any, float]:
@@ -153,7 +155,7 @@ class TheJevAIProvider:
             raise JevRateLimitError("HTTP 429: rate limited", status_code=status)
         if status == 529:
             raise JevOverloadedError("HTTP 529: overloaded", status_code=status)
-        raise JevHTTPError(f"HTTP {status}", status_code=status)
+        raise JevHTTPError(_status_detail(status, response), status_code=status)
 
     def _log_retry(self, state: RetryCallState) -> None:
         exc = state.outcome.exception() if state.outcome else None
@@ -164,6 +166,15 @@ class TheJevAIProvider:
             status_code=getattr(exc, "status_code", None),
             sleep_s=round(state.upcoming_sleep, 2),
         )
+
+
+def _status_detail(status: int, response: httpx.Response) -> str:
+    """`HTTP <status>`, plus the vendor envelope's message if there is one."""
+    try:
+        message = vendor_message(response.json())
+    except ValueError:
+        message = None
+    return f"HTTP {status}: {message}" if message else f"HTTP {status}"
 
 
 def _validation_detail(response: httpx.Response) -> tuple[str | None, str]:

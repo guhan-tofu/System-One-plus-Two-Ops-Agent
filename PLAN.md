@@ -164,6 +164,12 @@ Implementation requirements:
 - Response parsing must be **defensive**: the vendor docs mention answers possibly
   nested under `result` and a timing field named `elapsed`/`elapsedMs`. Accept both
   shapes; Phase 1 includes a live probe to confirm the real shape and lock it in.
+- **Confirmed shape (live probe, 2026-09-25) — parser is locked to this:**
+  `{"code": 0, "message": "ok", "data": {"creditsUsed", "result": {"answers", "usage", "elapsedMs"}}}`.
+  Every answer carries `type`; score `legend`/`probabilities` are keyed by level
+  index as strings (`"0"`, `"1"`, …). Errors use `{"code": -1, "message"}` (e.g. 502
+  for an unknown model). **No model ID is returned** (body or headers): we audit the
+  requested model with `model_verified=false` until the vendor echoes one.
 - Always record the returned `model` field (versioned ID) in the audit log.
 - Retries: exponential backoff with jitter on 429 and 529 only (max 4 attempts);
   no retry on 401/422. 422 errors surface the offending field in the exception.

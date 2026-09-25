@@ -77,11 +77,13 @@ async def _probe(model: str | None) -> dict[str, Any]:
         "raw_response": raw,
     }
     try:
-        result = parse_response(raw, request.questions, latency_ms=latency_ms)
+        result = parse_response(
+            raw, request.questions, requested_model=request.model, latency_ms=latency_ms
+        )
     except JevError as exc:
         report["parse"] = f"failed: {exc}"
     else:
         report["parse"] = "ok"
-        report["returned_model"] = result.model
-        report["answers_location"] = result.shape
+        report["audited_model"] = result.model
+        report["model_verified"] = result.model_verified
     return report

@@ -25,6 +25,6 @@ async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
         )
     finally:
         await provider.aclose()
-    assert result.model
+    assert result.model == settings.jev_model
     assert set(result.answers) == set(TRIAGE)
-    assert result.shape == "answers"
+    assert result.vendor_elapsed_ms is not None
