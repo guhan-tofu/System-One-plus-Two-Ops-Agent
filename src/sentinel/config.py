@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     """When the Jev provider fails: escalate to a human, or retry on llm_fallback."""
 
     thresholds_path: Path = Path("policies/thresholds.yaml")
+    tools_policy_path: Path = Path("policies/tools.yaml")
 
     database_url: str = "sqlite:///./sentinel.db"
     log_level: LogLevel = "INFO"

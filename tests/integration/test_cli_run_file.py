@@ -13,6 +13,7 @@ from typer.testing import CliRunner
 from sentinel.cli import app
 from tests.fixtures.jev import confirmed_response
 from tests.fixtures.openai import RESPONSES_URL, response_body
+from tests.fixtures.pipeline import draft_json
 
 JEV_URL = "https://jev.test/v1/systemone"
 FAKE_KEY = "fake-key-for-cli-tests"  # pragma: allowlist secret
@@ -75,6 +76,16 @@ def jev_answer(request: httpx.Request, triage_path: str = "lookup") -> httpx.Res
             },
             "is_abusive": {"type": "noul", "noul": 0.01},
         }
+    elif "claim_supported" in questions:
+        answers = {
+            "claim_supported": {"type": "noul", "noul": 0.95},
+            "task_status": {
+                "type": "choice",
+                "choice": "complete",
+                "probabilities": {"complete": 0.9, "verify_more": 0.05, "failed": 0.05},
+                "confidence": 0.85,
+            },
+        }
     else:
         answers = {
             "tier": {
@@ -90,20 +101,25 @@ def jev_answer(request: httpx.Request, triage_path: str = "lookup") -> httpx.Res
 @respx.mock
 def test_run_file_prints_full_trace(_env: Path) -> None:
     respx.post(JEV_URL).mock(side_effect=jev_answer)
-    respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT, model="fake-strong-2026"))
+    respx.post(RESPONSES_URL).respond(
+        200, json=response_body(draft_json(DRAFT), model="fake-strong-2026")
+    )
 
     result = CliRunner().invoke(app, ["run-file", str(SAMPLES / "ticket.json")])
 
     assert result.exit_code == 0, result.output
     out = result.stdout
-    for stage in ("ingest", "build_state", "triage", "enrich", "route_model", "generate", "decide"):
+    for stage in (
+        "ingest", "build_state", "triage", "enrich", "route_model", "generate", "verify", "decide",
+    ):  # fmt: skip
         assert f"[{stage:<11}]" in out
     assert "category=billing (0.96)" in out
     assert "thejevai:jev-latest (unverified)" in out
     assert "lookup_customer found=True" in out
     assert "tier=strong" in out
     assert "openai:fake-strong-2026" in out
-    assert "DRAFT READY" in out and DRAFT in out
+    assert "claim_supported=0.95" in out
+    assert "READY TO SEND" in out and DRAFT in out
     assert FAKE_KEY not in result.output
 
     rows = sqlite3.connect(_env).execute("select stage, model from audit_events").fetchall()

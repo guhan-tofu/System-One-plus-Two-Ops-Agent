@@ -32,6 +32,28 @@ class AuditEvent(Base):
     )
 
 
+class ReviewItem(Base):
+    """Human review queue. `approval`: proposed tool calls wait for a human.
+    `review`: the item was escalated and needs a human to handle it."""
+
+    __tablename__ = "review_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    run_id: Mapped[str] = mapped_column(String(64), index=True)
+    item_id: Mapped[str] = mapped_column(String(128), index=True)
+    kind: Mapped[str] = mapped_column(String(16))
+    status: Mapped[str] = mapped_column(String(16), default="pending", index=True)
+    reasons: Mapped[list[str]] = mapped_column(JSON)
+    payload: Mapped[dict[str, Any]] = mapped_column(JSON)
+    """Draft, proposed tool calls and guard decisions: what the reviewer needs."""
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    decided_by: Mapped[str | None] = mapped_column(String(128))
+    note: Mapped[str | None] = mapped_column(String(1000))
+
+
 def make_engine(url: str) -> Engine:
     engine = create_engine(url)
     Base.metadata.create_all(engine)

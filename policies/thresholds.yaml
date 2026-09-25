@@ -7,3 +7,9 @@ triage:
 route_model:
   min_confidence: 0.6             # below -> default_tier
   default_tier: strong
+guard:
+  min_safe: 0.9                   # Jev "safe to run" noul below -> human approval
+verify:
+  claim_supported_min: 0.85       # below -> human queue
+  # Executed tools must also give task_status == complete, and any failed tool
+  # escalates deterministically, whatever Jev says.

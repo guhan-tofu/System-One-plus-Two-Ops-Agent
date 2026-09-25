@@ -153,7 +153,28 @@ def _stage_summary(record: StageRecord) -> str:
             return f"{d.get('tool')} found={d.get('found')}"
         case "generate" if "draft" in d:
             u = d["usage"]
-            return f"tier={d['tier']} tokens in/out={u['input_tokens']}/{u['output_tokens']}"
+            calls = ", ".join(c["tool"] for c in d.get("tool_calls", [])) or "none"
+            return (
+                f"tier={d['tier']} tokens in/out={u['input_tokens']}/{u['output_tokens']}"
+                f"  proposed tools: {calls}"
+            )
+        case "guard" if "decision" in d:
+            g = d["decision"]
+            safe = "" if g.get("safe") is None else f"  jev safe={g['safe']:.2f}"
+            why = f"  ({'; '.join(g['reasons'])})" if g.get("reasons") else ""
+            return (
+                f"{g['call']['tool']}: policy={g['policy']['action']}{safe} -> {g['action']}{why}"
+            )
+        case "execute":
+            if d.get("ok"):
+                return f"{d.get('tool')} ok"
+            return f"{d.get('tool')} FAILED: {d.get('error')}"
+        case "verify":
+            if d.get("deterministic"):
+                return "failed tool -> escalate (Jev not asked)"
+            if "decision" in d:
+                v = d["decision"]
+                return f"claim_supported={v['claim_supported']:.2f}  task_status={v['task_status']}"
         case "decide":
             cost = d.get("total_cost_usd")
             cost_s = "unknown" if cost is None else f"${cost:.5f}"
@@ -180,12 +201,16 @@ def format_trace(outcome: Outcome) -> str:
         if summary:
             lines.append(f"{'':15}{summary}")
     lines.append("")
-    if outcome.status == "escalated":
-        lines.append("ESCALATED to human queue:")
-        lines += [f"  - {reason}" for reason in outcome.reasons]
+    if outcome.tool_calls:
+        lines.append("Tool calls:")
+        lines += [f"  - {c.tool} {json.dumps(c.args)}" for c in outcome.tool_calls]
+        lines.append("")
+    if outcome.status == "ready_to_send":
+        lines.append(f"READY TO SEND (tier {outcome.tier}; verified against tool results):")
     else:
-        lines.append(
-            f"DRAFT READY (tier {outcome.tier}; not sent, guard/verify arrive in Phase 4):"
-        )
-        lines += ["", *(f"  {line}" for line in (outcome.draft or "").splitlines())]
+        label = "AWAITING APPROVAL" if outcome.status == "awaiting_approval" else "ESCALATED"
+        lines.append(f"{label} (review #{outcome.review_id}):")
+        lines += [f"  - {reason}" for reason in outcome.reasons]
+    if outcome.draft:
+        lines += ["", *(f"  {line}" for line in outcome.draft.splitlines())]
     return "\n".join(lines)

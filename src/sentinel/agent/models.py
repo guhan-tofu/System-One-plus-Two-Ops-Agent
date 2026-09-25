@@ -11,10 +11,19 @@ from sentinel.config import LLMTier
 
 Source = Literal["ticket", "alert", "email"]
 StageName = Literal[
-    "ingest", "build_state", "triage", "enrich", "route_model", "generate", "decide"
+    "ingest",
+    "build_state",
+    "triage",
+    "enrich",
+    "route_model",
+    "generate",
+    "guard",
+    "execute",
+    "verify",
+    "decide",
 ]
 StageStatus = Literal["ok", "escalate", "error"]
-OutcomeStatus = Literal["draft_ready", "escalated"]
+OutcomeStatus = Literal["ready_to_send", "awaiting_approval", "escalated"]
 
 
 class WorkItem(BaseModel):
@@ -47,6 +56,15 @@ class StageRecord(BaseModel):
     cost_usd: float | None = None
 
 
+class ProposedCall(BaseModel):
+    """A tool call proposed by the drafting model. Code decides whether it runs."""
+
+    model_config = ConfigDict(frozen=True)
+
+    tool: str
+    args: dict[str, Any]
+
+
 class Outcome(BaseModel):
     model_config = ConfigDict(frozen=True)
 
@@ -54,8 +72,11 @@ class Outcome(BaseModel):
     item_id: str
     status: OutcomeStatus
     reasons: list[str] = Field(default_factory=list)
-    """Why the item was escalated (empty when a draft is ready)."""
+    """Why the item went to a human (empty when ready to send)."""
+    review_id: int | None = None
+    """Human review queue entry, for escalated / awaiting_approval items."""
     tier: LLMTier | None = None
     draft: str | None = None
-    """Proposed reply. Phase 3 never sends it: guard/verify come in Phase 4."""
+    """Proposed reply. Verified against tool results when status is ready_to_send."""
+    tool_calls: list[ProposedCall] = Field(default_factory=list)
     trace: list[StageRecord]

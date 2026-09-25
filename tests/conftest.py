@@ -40,6 +40,7 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "MODEL_TIERS_PATH",
         "JEV_ON_FAILURE",
         "THRESHOLDS_PATH",
+        "TOOLS_POLICY_PATH",
         "DATABASE_URL",
         "LOG_LEVEL",
     ):
