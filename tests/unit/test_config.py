@@ -8,10 +8,14 @@ from sentinel.config import Settings, get_settings
 
 def test_defaults() -> None:
     s = Settings()
-    assert s.jev_provider == "thejevai"
+    assert s.jev_provider == "vercel"
+    assert s.jev_gateway_model == "typesafe-ai/jev"
+    assert s.ai_gateway_api_key.get_secret_value() == ""
     assert s.jev_model == "jev-latest"
     assert s.database_url.startswith("sqlite")
     assert s.jev_api_key.get_secret_value() == ""
+    assert s.jev_fallback_tier == "fast"
+    assert str(s.model_tiers_path) == "policies/model_tiers.yaml"
 
 
 def test_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:

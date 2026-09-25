@@ -7,12 +7,14 @@ Read them only at the point of use via `.get_secret_value()`.
 from __future__ import annotations
 
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-JevProviderName = Literal["thejevai", "typesafe", "llm_fallback"]
+JevProviderName = Literal["vercel", "thejevai", "typesafe", "llm_fallback"]
+LLMTier = Literal["fast", "strong"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
 
@@ -23,14 +25,29 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Default: official TypeSafe Jev via Vercel AI Gateway.
+    ai_gateway_api_key: SecretStr = SecretStr("")
+    ai_gateway_base_url: str = "https://ai-gateway.vercel.sh/v4/ai"
+    jev_gateway_model: str = "typesafe-ai/jev"
+
+    # thejevai.com reseller (fallback).
     jev_api_key: SecretStr = SecretStr("")
     jev_base_url: str = "https://thejevai.com/v1/systemone"
     jev_model: str = "jev-latest"
-    jev_provider: JevProviderName = "thejevai"
+    jev_provider: JevProviderName = "vercel"
 
     openai_api_key: SecretStr = SecretStr("")
     openai_model_fast: str = ""
     openai_model_strong: str = ""
+    model_tiers_path: Path = Path("policies/model_tiers.yaml")
+    """Per-model token prices used for cost accounting."""
+
+    jev_fallback_tier: LLMTier = "fast"
+    """OpenAI tier used when JEV_PROVIDER=llm_fallback emulates Jev."""
+    jev_on_failure: Literal["human", "llm_fallback"] = "human"
+    """When the Jev provider fails: escalate to a human, or retry on llm_fallback."""
+
+    thresholds_path: Path = Path("policies/thresholds.yaml")
 
     database_url: str = "sqlite:///./sentinel.db"
     log_level: LogLevel = "INFO"

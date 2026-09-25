@@ -21,6 +21,14 @@ def test_redact_secrets_nested() -> None:
     assert out["event"] == "call"
 
 
+def test_token_counts_not_redacted() -> None:
+    event = {"input_tokens": 12, "cached_input_tokens": 3, "tokens": "x", "access_token": "x"}
+    out = redact_secrets(None, "info", event)
+    assert out["input_tokens"] == 12 and out["cached_input_tokens"] == 3
+    assert out["tokens"] == REDACTED
+    assert out["access_token"] == REDACTED
+
+
 def test_json_output_is_scrubbed(capsys: pytest.CaptureFixture[str]) -> None:
     configure_logging("INFO")
     fake = "fake-value"  # pragma: allowlist secret

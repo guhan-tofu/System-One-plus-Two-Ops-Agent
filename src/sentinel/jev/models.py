@@ -1,8 +1,9 @@
 """Request/response models for Jev (System One).
 
-Wire format (from vendor docs, pending confirmation by `sentinel probe`):
+Wire format (confirmed by `sentinel probe`, see `sentinel.jev.parsing`):
     request:  {"model": str, "state": str | object | [str], "questions": {id: Question}}
-    response: {"model": str, "answers": {id: Answer}, "usage": {...}}
+    response: {"code": 0, "message": "ok",
+               "data": {"creditsUsed", "result": {"answers": {id: Answer}, "usage", "elapsedMs"}}}
 """
 
 from __future__ import annotations
@@ -91,19 +92,25 @@ class _Answer(BaseModel):
 
 
 class ChoiceAnswer(_Answer):
+    type: Literal["choice"]
     choice: str
     probabilities: dict[str, Probability]
     confidence: Probability
 
 
 class ScoreAnswer(_Answer):
+    type: Literal["score"]
     score: float
-    legend: Any = None
-    probabilities: dict[str, Probability] | list[Probability]
+    """Expected level index, 0 (lowest) .. len(levels) - 1."""
+    legend: dict[str, str]
+    """Level index (as a string) -> level text."""
+    probabilities: dict[str, Probability]
+    """Level index (as a string) -> probability."""
     confidence: Probability
 
 
 class NoulAnswer(_Answer):
+    type: Literal["noul"]
     noul: Probability
     """Probability of yes."""
 
@@ -114,16 +121,22 @@ Answer = ChoiceAnswer | ScoreAnswer | NoulAnswer
 class JevResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    provider: str
+    """Which JevProvider answered, e.g. "thejevai" or "llm_fallback"."""
     model: str
-    """Versioned model ID returned by the provider. Always audit this."""
+    """Model ID to audit: the vendor's if it returned one, else the one we requested."""
+    model_verified: bool
+    """True only if the provider reported the model ID. thejevai.com currently does not."""
     answers: dict[str, Answer]
     usage: dict[str, Any] | None = None
-    vendor_timing: dict[str, float] = Field(default_factory=dict)
-    """Timing fields as reported by the vendor, keyed by their original name."""
+    credits_used: float | None = None
+    vendor_elapsed_ms: float | None = None
+    """Timing as reported by the vendor (informational; untrusted)."""
     latency_ms: float
     """Client-side wall-clock latency (authoritative for evals)."""
-    shape: str
-    """Where answers were found in the response, e.g. "answers" or "result.answers"."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Provider trace IDs worth auditing, e.g. the gateway's generation ID and the
+    upstream provider that actually answered. No state, no answers."""
     raw: dict[str, Any] = Field(default_factory=dict, repr=False)
 
     def choice(self, qid: str) -> ChoiceAnswer:

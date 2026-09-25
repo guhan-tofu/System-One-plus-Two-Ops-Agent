@@ -1,0 +1,16 @@
+# Allowlisted OpenAI tiers. The model behind each tier is set in .env:
+#   fast   -> OPENAI_MODEL_FAST    (short, routine, low-risk replies)
+#   strong -> OPENAI_MODEL_STRONG  (multi-step reasoning, long context, disputes, money)
+#
+# Token prices in USD per 1M tokens, keyed by model name. Add an entry for each
+# model you configure, using OpenAI's current published pricing. Both the name
+# you request (e.g. an alias) and the dated name OpenAI returns are looked up;
+# the returned name wins. `cached_input` defaults to `input` when omitted.
+# A model with no entry is still usable, but its cost is recorded as unknown.
+#
+# Example (not real prices):
+#   some-model-2026-01-01:
+#     input: 1.00
+#     cached_input: 0.10
+#     output: 4.00
+prices: {}

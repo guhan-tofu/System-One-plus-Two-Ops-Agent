@@ -1,0 +1,6 @@
+{
+  "id": "sample-email-003",
+  "source": "email",
+  "subject": "Exporting reports",
+  "body": "Hello, is there a way to export a report to CSV? I couldn't find the option. No rush."
+}

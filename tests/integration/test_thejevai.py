@@ -22,7 +22,7 @@ from sentinel.jev.errors import (
 )
 from sentinel.jev.provider import JevProvider, build_provider
 from sentinel.jev.thejevai import TheJevAIProvider
-from tests.fixtures.jev import FAKE_MODEL_ID, QUESTIONS, documented_response
+from tests.fixtures.jev import QUESTIONS, REQUESTED_MODEL, confirmed_response, error_envelope
 
 URL = "https://jev.test/v1/systemone"
 FAKE_KEY = "fake-jev-key-for-tests"  # pragma: allowlist secret
@@ -32,7 +32,7 @@ FAKE_KEY = "fake-jev-key-for-tests"  # pragma: allowlist secret
 async def provider() -> AsyncIterator[TheJevAIProvider]:
     p = TheJevAIProvider(
         api_key=SecretStr(FAKE_KEY),
-        base_url=URL,
+        url=URL,
         default_model="jev-latest",
         retry_wait=wait_none(),
     )
@@ -42,10 +42,11 @@ async def provider() -> AsyncIterator[TheJevAIProvider]:
 
 @respx.mock
 async def test_success_sends_documented_request(provider: TheJevAIProvider) -> None:
-    route = respx.post(URL).respond(200, json=documented_response())
+    route = respx.post(URL).respond(200, json=confirmed_response())
     result = await provider.evaluate({"subject": "refund"}, QUESTIONS)
 
-    assert result.model == FAKE_MODEL_ID
+    assert result.model == REQUESTED_MODEL
+    assert result.model_verified is False
     assert result.choice("category").choice == "billing"
     assert result.latency_ms >= 0
 
@@ -61,9 +62,10 @@ async def test_success_sends_documented_request(provider: TheJevAIProvider) -> N
 
 @respx.mock
 async def test_model_override(provider: TheJevAIProvider) -> None:
-    route = respx.post(URL).respond(200, json=documented_response())
-    await provider.evaluate("s", QUESTIONS, model="jev-1.13.0")
+    route = respx.post(URL).respond(200, json=confirmed_response())
+    result = await provider.evaluate("s", QUESTIONS, model="jev-1.13.0")
     assert json.loads(route.calls.last.request.content)["model"] == "jev-1.13.0"
+    assert result.model == "jev-1.13.0"  # audited as requested; vendor echoes none
 
 
 @respx.mock
@@ -115,10 +117,10 @@ async def test_retryable_then_success(provider: TheJevAIProvider, status: int) -
     route.side_effect = [
         httpx.Response(status),
         httpx.Response(status),
-        httpx.Response(200, json=documented_response()),
+        httpx.Response(200, json=confirmed_response()),
     ]
     result = await provider.evaluate("s", QUESTIONS)
-    assert result.model == FAKE_MODEL_ID
+    assert result.model == REQUESTED_MODEL
     assert route.call_count == 3
 
 
@@ -140,6 +142,23 @@ async def test_other_statuses_not_retried(provider: TheJevAIProvider, status: in
     with pytest.raises((JevHTTPError, JevAuthError)):
         await provider.evaluate("s", QUESTIONS)
     assert route.call_count == 1
+
+
+@respx.mock
+async def test_vendor_error_envelope_surfaces_message(provider: TheJevAIProvider) -> None:
+    # Observed live: an unknown model gives 502 with a {"code": -1, "message"} envelope.
+    route = respx.post(URL).respond(502, json=error_envelope())
+    with pytest.raises(JevHTTPError, match="rejected the request") as exc_info:
+        await provider.evaluate("s", QUESTIONS)
+    assert exc_info.value.status_code == 502
+    assert route.call_count == 1
+
+
+@respx.mock
+async def test_200_with_error_code_rejected(provider: TheJevAIProvider) -> None:
+    respx.post(URL).respond(200, json=error_envelope("quota exceeded"))
+    with pytest.raises(JevResponseError, match="quota exceeded"):
+        await provider.evaluate("s", QUESTIONS)
 
 
 @respx.mock
@@ -165,7 +184,7 @@ async def test_key_never_logged(
 
     configure_logging("DEBUG")
     route = respx.post(URL)
-    route.side_effect = [httpx.Response(429), httpx.Response(200, json=documented_response())]
+    route.side_effect = [httpx.Response(429), httpx.Response(200, json=confirmed_response())]
     await provider.evaluate("secret-state-text", QUESTIONS)
     err = capsys.readouterr().err
     assert "jev.retry" in err and "jev.evaluate" in err
@@ -182,7 +201,7 @@ def test_timeouts_configured() -> None:
 
 def test_missing_key_rejected() -> None:
     with pytest.raises(JevConfigError):
-        TheJevAIProvider(api_key=SecretStr(""), base_url=URL, default_model="m")
+        TheJevAIProvider(api_key=SecretStr(""), url=URL, default_model="m")
 
 
 async def test_factory_builds_thejevai() -> None:
@@ -193,8 +212,7 @@ async def test_factory_builds_thejevai() -> None:
     await p.aclose()
 
 
-@pytest.mark.parametrize("name", ["typesafe", "llm_fallback"])
-def test_factory_unimplemented_providers(name: str) -> None:
-    settings = Settings(jev_api_key=SecretStr(FAKE_KEY), jev_provider=name)  # type: ignore[arg-type]
+def test_factory_typesafe_not_implemented() -> None:
+    settings = Settings(jev_api_key=SecretStr(FAKE_KEY), jev_provider="typesafe")
     with pytest.raises(JevConfigError):
         build_provider(settings)
