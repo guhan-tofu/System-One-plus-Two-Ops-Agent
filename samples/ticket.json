@@ -1,0 +1,7 @@
+{
+  "id": "sample-ticket-001",
+  "source": "ticket",
+  "subject": "Charged twice this month",
+  "body": "Hi, I was charged twice for my Pro subscription on 1 September. Please refund the duplicate. You can reach me at test.one@example.com or +44 20 7946 0958. Thanks!",
+  "customer_id": "cus_1001"
+}

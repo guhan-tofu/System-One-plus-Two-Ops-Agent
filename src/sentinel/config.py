@@ -38,6 +38,10 @@ class Settings(BaseSettings):
 
     jev_fallback_tier: LLMTier = "fast"
     """OpenAI tier used when JEV_PROVIDER=llm_fallback emulates Jev."""
+    jev_on_failure: Literal["human", "llm_fallback"] = "human"
+    """When the Jev provider fails: escalate to a human, or retry on llm_fallback."""
+
+    thresholds_path: Path = Path("policies/thresholds.yaml")
 
     database_url: str = "sqlite:///./sentinel.db"
     log_level: LogLevel = "INFO"

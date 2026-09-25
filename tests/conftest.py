@@ -35,6 +35,8 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "OPENAI_MODEL_STRONG",
         "JEV_FALLBACK_TIER",
         "MODEL_TIERS_PATH",
+        "JEV_ON_FAILURE",
+        "THRESHOLDS_PATH",
         "DATABASE_URL",
         "LOG_LEVEL",
     ):

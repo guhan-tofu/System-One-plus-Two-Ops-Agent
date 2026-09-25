@@ -1,0 +1,7 @@
+{
+  "id": "sample-ticket-002",
+  "source": "ticket",
+  "subject": "Dashboard down for our whole team",
+  "body": "Our EU dashboard has been timing out for the last hour and none of our 40 analysts can work. This is blocking our month-end close. Is there an incident?",
+  "customer_id": "cus_1002"
+}
