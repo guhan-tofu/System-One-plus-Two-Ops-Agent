@@ -134,6 +134,9 @@ class JevResult(BaseModel):
     """Timing as reported by the vendor (informational; untrusted)."""
     latency_ms: float
     """Client-side wall-clock latency (authoritative for evals)."""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    """Provider trace IDs worth auditing, e.g. the gateway's generation ID and the
+    upstream provider that actually answered. No state, no answers."""
     raw: dict[str, Any] = Field(default_factory=dict, repr=False)
 
     def choice(self, qid: str) -> ChoiceAnswer:

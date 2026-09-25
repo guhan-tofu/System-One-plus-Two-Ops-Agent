@@ -12,9 +12,8 @@ import typer
 from sentinel import __version__
 from sentinel.agent.models import Outcome, StageRecord, WorkItem
 from sentinel.config import get_settings
-from sentinel.jev.errors import JevError
+from sentinel.jev.errors import JevConfigError, JevError
 from sentinel.jev.models import Question
-from sentinel.jev.parsing import describe_shape, parse_response
 from sentinel.jev.questions import choice, noul, score
 from sentinel.llm.openai_client import LLMError
 from sentinel.log import configure_logging
@@ -64,31 +63,35 @@ def probe(
 
 
 async def _probe(model: str | None) -> dict[str, Any]:
-    from sentinel.jev.thejevai import TheJevAIProvider
+    from sentinel.jev.http import HTTPJevProvider
+    from sentinel.jev.provider import build_provider
 
-    provider = TheJevAIProvider.from_settings(get_settings())
+    settings = get_settings()
+    provider = build_provider(settings)
     try:
+        if not isinstance(provider, HTTPJevProvider):
+            raise JevConfigError(f"probe needs an HTTP Jev provider, not {provider.name!r}")
         request = provider.build_request(PROBE_STATE, PROBE_QUESTIONS, model)
         raw, latency_ms = await provider.post_raw(request)
     finally:
         await provider.aclose()
 
     report: dict[str, Any] = {
+        "provider": provider.name,
         "requested_model": request.model,
         "latency_ms": round(latency_ms, 1),
-        "shape": describe_shape(raw),
+        "shape": provider.describe_shape(raw),
         "raw_response": raw,
     }
     try:
-        result = parse_response(
-            raw, request.questions, requested_model=request.model, latency_ms=latency_ms
-        )
+        result = provider.parse(raw, request, latency_ms=latency_ms)
     except JevError as exc:
         report["parse"] = f"failed: {exc}"
     else:
         report["parse"] = "ok"
         report["audited_model"] = result.model
         report["model_verified"] = result.model_verified
+        report["metadata"] = result.metadata
     return report
 
 

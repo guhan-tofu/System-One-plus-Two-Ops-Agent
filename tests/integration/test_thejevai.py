@@ -32,7 +32,7 @@ FAKE_KEY = "fake-jev-key-for-tests"  # pragma: allowlist secret
 async def provider() -> AsyncIterator[TheJevAIProvider]:
     p = TheJevAIProvider(
         api_key=SecretStr(FAKE_KEY),
-        base_url=URL,
+        url=URL,
         default_model="jev-latest",
         retry_wait=wait_none(),
     )
@@ -201,7 +201,7 @@ def test_timeouts_configured() -> None:
 
 def test_missing_key_rejected() -> None:
     with pytest.raises(JevConfigError):
-        TheJevAIProvider(api_key=SecretStr(""), base_url=URL, default_model="m")
+        TheJevAIProvider(api_key=SecretStr(""), url=URL, default_model="m")
 
 
 async def test_factory_builds_thejevai() -> None:

@@ -13,7 +13,7 @@ from typing import Literal
 from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-JevProviderName = Literal["thejevai", "typesafe", "llm_fallback"]
+JevProviderName = Literal["vercel", "thejevai", "typesafe", "llm_fallback"]
 LLMTier = Literal["fast", "strong"]
 LogLevel = Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
@@ -25,10 +25,16 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
+    # Default: official TypeSafe Jev via Vercel AI Gateway.
+    ai_gateway_api_key: SecretStr = SecretStr("")
+    ai_gateway_base_url: str = "https://ai-gateway.vercel.sh/v4/ai"
+    jev_gateway_model: str = "typesafe-ai/jev"
+
+    # thejevai.com reseller (fallback).
     jev_api_key: SecretStr = SecretStr("")
     jev_base_url: str = "https://thejevai.com/v1/systemone"
     jev_model: str = "jev-latest"
-    jev_provider: JevProviderName = "thejevai"
+    jev_provider: JevProviderName = "vercel"
 
     openai_api_key: SecretStr = SecretStr("")
     openai_model_fast: str = ""

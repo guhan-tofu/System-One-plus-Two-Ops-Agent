@@ -77,6 +77,7 @@ class _Run:
                 status=status,
                 detail={
                     "answers": {k: a.model_dump() for k, a in result.answers.items()},
+                    "provider_metadata": result.metadata,
                     **detail,
                 },
                 provider=result.provider,

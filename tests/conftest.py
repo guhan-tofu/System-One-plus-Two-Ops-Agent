@@ -26,6 +26,9 @@ def pytest_collection_modifyitems(config: pytest.Config, items: list[pytest.Item
 def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """Keep tests independent of a developer's real `.env` and environment."""
     for var in (
+        "AI_GATEWAY_API_KEY",
+        "AI_GATEWAY_BASE_URL",
+        "JEV_GATEWAY_MODEL",
         "JEV_API_KEY",
         "JEV_BASE_URL",
         "JEV_MODEL",

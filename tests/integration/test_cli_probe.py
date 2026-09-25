@@ -32,6 +32,7 @@ PROBE_ANSWERS = {
 
 @pytest.fixture(autouse=True)
 def _env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("JEV_PROVIDER", "thejevai")
     monkeypatch.setenv("JEV_API_KEY", FAKE_KEY)
     monkeypatch.setenv("JEV_BASE_URL", URL)
 

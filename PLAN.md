@@ -23,10 +23,13 @@ Guiding rule: *Jev decides which path, the LLM does the work, code pulls the tri
 - All keys live in `.env` (gitignored). Load with `pydantic-settings`. Never log them,
   never put them in prompts, tests, fixtures, or commit history.
 - `.env.example` is committed with empty values only.
-- Jev provider: **thejevai.com** (independent third party, not TypeSafe). Treat it as
-  an untrusted vendor: we cannot verify which model actually answers. Therefore:
-  - Everything goes through a `JevProvider` interface so we can swap to official
-    TypeSafe later with a config change.
+- Jev provider (default, `JEV_PROVIDER=vercel`): **official TypeSafe Jev
+  (`typesafe-ai/jev`) through Vercel AI Gateway**. The gateway reports which upstream
+  answered (`finalProvider`) and a `generationId`; both are audited. Fallbacks:
+  **thejevai.com** (independent reseller, untrusted: we cannot verify which model
+  answers) and `llm_fallback` (OpenAI emulation). Therefore:
+  - Everything goes through a `JevProvider` interface so providers swap with a
+    config change.
   - Redact PII from state before sending (emails, phone numbers, card numbers).
   - Our eval suite (Phase 5) is the source of truth on quality, not vendor claims.
 
@@ -146,6 +149,17 @@ sentinel/
 ```
 
 ## 6. Jev client contract
+
+**Vercel AI Gateway (default, confirmed live 2026-09-25; `jev/vercel.py`):**
+`POST {AI_GATEWAY_BASE_URL}/evaluation-model`, headers `ai-model-id: typesafe-ai/jev`,
+`ai-evaluation-model-specification-version: 4`, `ai-gateway-protocol-version: 0.0.1`,
+`Authorization: Bearer <key>`; body `{ "state", "questions" }` (model in the header).
+Yes/no questions are type `boolean` (answer `probability`) on the wire; we map them to
+`noul`. Response: `{answers, rounding?, usage?, warnings, providerMetadata: {typesafe:
+{confidence}, gateway: {routing: {finalProvider}, cost, generationId}}}`. No versioned
+model ID is returned; the requested ID is audited with `model_verified=false`.
+
+**thejevai.com (fallback), as originally specified:**
 
 Endpoint: `POST {JEV_BASE_URL}` with `Authorization: Bearer <key>`,
 body `{ "model", "state", "questions" }`. `state` is string | object | array of text.

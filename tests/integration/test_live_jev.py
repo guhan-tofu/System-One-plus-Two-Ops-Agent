@@ -1,30 +1,35 @@
-"""Real calls to thejevai.com. Run with: uv run pytest --run-live -m live"""
+"""Real Jev calls. Run with: uv run pytest --run-live -m live"""
 
 from __future__ import annotations
 
 import pytest
 
-from sentinel.config import get_settings
+from sentinel.config import Settings, get_settings
+from sentinel.jev.provider import build_provider
 from sentinel.jev.questions import TRIAGE
-from sentinel.jev.thejevai import TheJevAIProvider
+
+
+def live_settings(monkeypatch: pytest.MonkeyPatch, provider: str) -> Settings:
+    monkeypatch.undo()  # use the developer's real .env / environment for live runs
+    get_settings.cache_clear()
+    settings = Settings(jev_provider=provider)  # type: ignore[arg-type]
+    key = settings.ai_gateway_api_key if provider == "vercel" else settings.jev_api_key
+    if not key.get_secret_value():
+        pytest.skip(f"no key configured for {provider}")
+    return settings
 
 
 @pytest.mark.live
-async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.undo()  # use the developer's real .env for live runs
-    from sentinel.config import Settings
-
-    get_settings.cache_clear()
-    settings = Settings()
-    if not settings.jev_api_key.get_secret_value():
-        pytest.skip("JEV_API_KEY not set")
-    provider = TheJevAIProvider.from_settings(settings)
+@pytest.mark.parametrize("provider", ["vercel", "thejevai"])
+async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
+    jev = build_provider(live_settings(monkeypatch, provider))
     try:
-        result = await provider.evaluate(
+        result = await jev.evaluate(
             "Test ticket: I was charged twice for my subscription this month.", TRIAGE
         )
     finally:
-        await provider.aclose()
-    assert result.model == settings.jev_model
+        await jev.aclose()
+    assert result.provider == provider
+    assert result.model
     assert set(result.answers) == set(TRIAGE)
-    assert result.vendor_elapsed_ms is not None
+    assert result.choice("category").choice == "billing"
