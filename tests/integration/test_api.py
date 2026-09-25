@@ -77,6 +77,7 @@ def make_client(
     jev: ScriptedJev,
     *calls: dict[str, Any],
     tools: ToolRegistry | None = None,
+    max_items_per_minute: int = 60,
 ) -> TestClient:
     respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT, *calls)))
     llm = OpenAIClient(
@@ -95,7 +96,9 @@ def make_client(
         tool_policy=ToolPolicy.load(POLICIES / "tools.yaml"),
     )
     service = Service(pipeline=pipeline, items=ItemStore(engine), queue=queue, audit=audit)
-    settings = Settings(sentinel_api_token=SecretStr(TOKEN))
+    settings = Settings(
+        sentinel_api_token=SecretStr(TOKEN), api_max_items_per_minute=max_items_per_minute
+    )
     return TestClient(create_app(settings, service=service))
 
 
@@ -311,3 +314,22 @@ def test_unknown_review(engine: Engine) -> None:
         assert response.status_code == 409
         response = client.post("/review/999/approve", json={"by": ""}, headers=AUTH)
         assert response.status_code == 422
+
+
+@respx.mock
+def test_item_rate_limit(engine: Engine) -> None:
+    with make_client(engine, lookup_jev(), max_items_per_minute=2) as client:
+        for n in range(2):
+            ok = client.post("/items", json={**ITEM, "id": f"r-{n}"}, headers=AUTH)
+            assert ok.status_code == 202
+        limited = client.post("/items", json={**ITEM, "id": "r-2"}, headers=AUTH)
+    assert limited.status_code == 429
+    assert int(limited.headers["Retry-After"]) >= 1
+    assert client.app.state.service.items.get("r-2") is None  # type: ignore[attr-defined]
+
+
+@respx.mock
+def test_oversized_item_rejected(engine: Engine) -> None:
+    with make_client(engine, lookup_jev()) as client:
+        response = client.post("/items", json={**ITEM, "body": "x" * 20_001}, headers=AUTH)
+    assert response.status_code == 422

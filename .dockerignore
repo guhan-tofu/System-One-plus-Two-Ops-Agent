@@ -1,0 +1,14 @@
+# Never send secrets or local state into the build context.
+.env
+.env.*
+!.env.example
+*.db
+*.sqlite*
+.venv/
+.git/
+**/__pycache__/
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+evals/reports/
+tests/

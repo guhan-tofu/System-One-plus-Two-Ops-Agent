@@ -43,6 +43,10 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "TOOLS_POLICY_PATH",
         "DATABASE_URL",
         "SENTINEL_API_TOKEN",
+        "JEV_MAX_RPS",
+        "JEV_BREAKER_FAILURES",
+        "JEV_BREAKER_RESET_S",
+        "API_MAX_ITEMS_PER_MINUTE",
         "LOG_LEVEL",
     ):
         monkeypatch.delenv(var, raising=False)

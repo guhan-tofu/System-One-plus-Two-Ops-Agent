@@ -13,8 +13,11 @@ Every endpoint except /healthz requires `Authorization: Bearer <SENTINEL_API_TOK
 
 from __future__ import annotations
 
+import math
 import secrets
-from collections.abc import AsyncIterator
+import time
+from collections import deque
+from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
 from typing import Annotated, Any, Literal
@@ -103,6 +106,39 @@ class Decision(BaseModel):
 _bearer = HTTPBearer(auto_error=False)
 
 
+class SlidingWindowLimiter:
+    """At most `limit` events per `window_s`, process-wide (single-instance service)."""
+
+    def __init__(
+        self, limit: int, window_s: float = 60.0, clock: Callable[[], float] = time.monotonic
+    ) -> None:
+        self.limit = limit
+        self.window_s = window_s
+        self._clock = clock
+        self._events: deque[float] = deque()
+
+    def acquire(self) -> float | None:
+        """None if allowed, else seconds until a slot frees up."""
+        now = self._clock()
+        while self._events and now - self._events[0] >= self.window_s:
+            self._events.popleft()
+        if len(self._events) >= self.limit:
+            return self.window_s - (now - self._events[0])
+        self._events.append(now)
+        return None
+
+
+def _item_rate_limit(request: Request) -> None:
+    limiter: SlidingWindowLimiter = request.app.state.item_limiter
+    retry_after = limiter.acquire()
+    if retry_after is not None:
+        raise HTTPException(
+            status.HTTP_429_TOO_MANY_REQUESTS,
+            "too many items; slow down",
+            headers={"Retry-After": str(max(1, math.ceil(retry_after)))},
+        )
+
+
 def _authorized(
     request: Request,
     creds: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
@@ -140,12 +176,17 @@ def create_app(settings: Settings | None = None, *, service: Service | None = No
 
     app = FastAPI(title="Sentinel", lifespan=lifespan)
     app.state.api_token = token
+    app.state.item_limiter = SlidingWindowLimiter(settings.api_max_items_per_minute)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:
         return {"status": "ok"}
 
-    @app.post("/items", status_code=status.HTTP_202_ACCEPTED, dependencies=[Auth])
+    @app.post(
+        "/items",
+        status_code=status.HTTP_202_ACCEPTED,
+        dependencies=[Auth, Depends(_item_rate_limit)],
+    )
     async def submit_item(
         item: WorkItem, background: BackgroundTasks, service: Svc
     ) -> ItemAccepted:

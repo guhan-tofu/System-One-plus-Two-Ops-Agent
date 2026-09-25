@@ -34,6 +34,7 @@ from sentinel.config import LLMTier, Settings
 from sentinel.jev.errors import JevError
 from sentinel.jev.models import JevResult, Question
 from sentinel.jev.provider import JevProvider, build_provider
+from sentinel.jev.resilience import harden
 from sentinel.llm.openai_client import LLMError, OpenAIClient
 from sentinel.log import get_logger
 from sentinel.policy.engine import Thresholds, ToolPolicy
@@ -445,10 +446,21 @@ def _describe(exc: Exception) -> str:
 
 def build_pipeline(settings: Settings) -> Pipeline:
     """Wire the pipeline from settings. Raises JevError/LLMError on misconfiguration."""
-    jev = build_provider(settings)
+
+    def hardened(provider: JevProvider) -> JevProvider:
+        return harden(
+            provider,
+            max_rps=settings.jev_max_rps,
+            failure_threshold=settings.jev_breaker_failures,
+            reset_after_s=settings.jev_breaker_reset_s,
+        )
+
+    jev = hardened(build_provider(settings))
     fallback: JevProvider | None = None
     if settings.jev_on_failure == "llm_fallback" and settings.jev_provider != "llm_fallback":
-        fallback = build_provider(settings.model_copy(update={"jev_provider": "llm_fallback"}))
+        fallback = hardened(
+            build_provider(settings.model_copy(update={"jev_provider": "llm_fallback"}))
+        )
     engine = make_engine(settings.database_url)
     return Pipeline(
         jev=jev,

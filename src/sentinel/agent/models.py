@@ -26,17 +26,20 @@ StageName = Literal[
 StageStatus = Literal["ok", "escalate", "error"]
 OutcomeStatus = Literal["ready_to_send", "awaiting_approval", "escalated"]
 
+MAX_BODY_CHARS = 20_000
+"""Keeps state well inside Jev's 32k-token state limit; longer items are rejected."""
+
 
 class WorkItem(BaseModel):
     """An inbound item as received. Holds raw (unredacted) data: never sent to a model."""
 
     model_config = ConfigDict(frozen=True, extra="forbid")
 
-    id: str = Field(min_length=1)
+    id: str = Field(min_length=1, max_length=128)
     source: Source
-    subject: str = ""
-    body: str = Field(min_length=1)
-    customer_id: str | None = None
+    subject: str = Field(default="", max_length=500)
+    body: str = Field(min_length=1, max_length=MAX_BODY_CHARS)
+    customer_id: str | None = Field(default=None, max_length=128)
     """Reference into our own systems, used by tools. Not included in model state."""
     received_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
 

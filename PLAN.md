@@ -323,6 +323,10 @@ FastAPI endpoints, background processing, `/review` approve/reject endpoints.
 **Phase 7 — Hardening**
 Rate limiting, circuit breaker on Jev provider, prompt-injection tests (instructions
 embedded in tickets must not change routing or trigger tools), Dockerfile.
+*Done:* `jev/resilience.py` (rate limit + circuit breaker, wrapped around every Jev
+provider in the pipeline), `POST /items` rate limit and size caps,
+`tests/integration/test_prompt_injection.py` (mocked, worst-case hijacked model) and
+`test_live_injection.py` (real Jev/OpenAI), `Dockerfile` (non-root, secrets at runtime).
 
 ## 10. Testing rules
 
