@@ -31,3 +31,6 @@ evals/reports/
 .idea/
 .vscode/
 .DS_Store
+
+# Node (AI Gateway example)
+node_modules/
