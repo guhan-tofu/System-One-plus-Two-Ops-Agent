@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -215,3 +216,82 @@ def format_trace(outcome: Outcome) -> str:
     if outcome.draft:
         lines += ["", *(f"  {line}" for line in outcome.draft.splitlines())]
     return "\n".join(lines)
+
+
+@app.command("eval")
+def eval_command(
+    dataset: Annotated[
+        Path, typer.Option(exists=True, dir_okay=False, help="Labeled JSONL dataset.")
+    ] = Path("evals/datasets/triage.jsonl"),
+    provider: Annotated[
+        list[str] | None,
+        typer.Option("--provider", "-p", help="Jev provider to evaluate (repeatable)."),
+    ] = None,
+    out: Annotated[Path, typer.Option(help="Report directory.")] = Path("evals/reports"),
+    concurrency: Annotated[int, typer.Option(min=1, max=16)] = 4,
+    limit: Annotated[int | None, typer.Option(min=1, help="Only the first N items.")] = None,
+    rate: Annotated[
+        float | None,
+        typer.Option(min=0.1, help="Max requests/second per provider (gateway free tier)."),
+    ] = None,
+) -> None:
+    """Evaluate Jev providers on a labeled dataset and write a markdown report."""
+    from sentinel.evals.dataset import load_dataset
+    from sentinel.evals.report import render
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    items = load_dataset(dataset)[:limit]
+    names = provider or ["vercel", "llm_fallback"]
+    scores = asyncio.run(_eval(names, items, concurrency, rate))
+
+    now = datetime.now(UTC)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = f"{now:%Y%m%d-%H%M%S}-{dataset.stem}"
+    report_path = out / f"{stem}.md"
+    report_path.write_text(
+        render(
+            dataset=dataset,
+            items=items,
+            scores=scores,
+            generated_at=now,
+            thresholds_path=settings.thresholds_path,
+        ),
+        encoding="utf-8",
+    )
+    typer.echo(f"report: {report_path}")
+    for s in scores:
+        acc = s.questions["category"].accuracy
+        typer.echo(
+            f"  {s.provider}: errors {len(s.errors)}/{s.n_items}, "
+            f"category accuracy {'-' if acc is None else f'{100 * acc:.1f}%'}"
+        )
+
+
+async def _eval(
+    names: list[str], items: list[Any], concurrency: int, rate: float | None
+) -> list[Any]:
+    from sentinel.evals.runner import ItemRun, ProviderRun, run_provider, score_run
+    from sentinel.jev.provider import build_provider
+    from sentinel.policy.engine import Thresholds
+
+    settings = get_settings()
+    policy = Thresholds.load(settings.thresholds_path).triage
+    scores = []
+    for name in names:
+        try:
+            jev = build_provider(settings.model_copy(update={"jev_provider": name}))
+        except (JevError, ValueError) as exc:
+            error = f"provider not available: {exc}"
+            run = ProviderRun(
+                provider=name,
+                runs=[ItemRun(item=i, result=None, error=error) for i in items],
+                wall_s=0.0,
+            )
+        else:
+            try:
+                run = await run_provider(jev, items, concurrency=concurrency, max_rate=rate)
+            finally:
+                await jev.aclose()
+        scores.append(score_run(run, policy))
+    return scores

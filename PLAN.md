@@ -191,6 +191,8 @@ Implementation requirements:
   thresholds mean the same thing across providers.
 - Always record the returned `model` field (versioned ID) in the audit log.
 - Retries: exponential backoff with jitter on 429 and 529 only (max 4 attempts);
+  the Vercel provider also retries 503, which the gateway returns for intermittent
+  upstream failures ("try again shortly"; ~50% of calls in the first eval run);
   no retry on 401/422. 422 errors surface the offending field in the exception.
 - Timeouts: 5s connect / 10s read. On final failure → fallback provider or
   human queue (configurable), never silent default answers.
@@ -310,7 +312,8 @@ human review queue table.
 **Phase 5 — Evals**
 50–200 labeled items in `evals/datasets/`. Metrics: accuracy per question,
 Brier score, calibration table (10 bins), p50/p95 latency, cost per item.
-Compare `thejevai` vs `llm_fallback` side by side.
+Compare providers side by side (`vercel`, `llm_fallback`, `thejevai`).
+`sentinel eval -p vercel -p llm_fallback [--rate 1]`; code in `src/sentinel/evals/`.
 *Accept:* `sentinel eval` writes a markdown report to `evals/reports/`.
 
 **Phase 6 — Service**

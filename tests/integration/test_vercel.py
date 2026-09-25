@@ -13,6 +13,7 @@ from sentinel.config import Settings
 from sentinel.jev.errors import (
     JevAuthError,
     JevConfigError,
+    JevOverloadedError,
     JevRateLimitError,
     JevValidationError,
 )
@@ -120,6 +121,26 @@ async def test_429_retried(provider: VercelJevProvider) -> None:
     route.side_effect = [httpx.Response(429), httpx.Response(200, json=gateway_response())]
     await provider.evaluate("s", QUESTIONS)
     assert route.call_count == 2
+
+
+@respx.mock
+async def test_503_retried(provider: VercelJevProvider) -> None:
+    route = respx.post(EVAL_URL)
+    route.side_effect = [
+        httpx.Response(503, json=gateway_error("Service temporarily unavailable.")),
+        httpx.Response(503, json=gateway_error("Service temporarily unavailable.")),
+        httpx.Response(200, json=gateway_response()),
+    ]
+    result = await provider.evaluate("s", QUESTIONS)
+    assert result.provider == "vercel" and route.call_count == 3
+
+
+@respx.mock
+async def test_503_gives_up_after_4_attempts(provider: VercelJevProvider) -> None:
+    route = respx.post(EVAL_URL).respond(503, json=gateway_error("try again shortly"))
+    with pytest.raises(JevOverloadedError, match="try again shortly"):
+        await provider.evaluate("s", QUESTIONS)
+    assert route.call_count == 4
 
 
 @respx.mock
