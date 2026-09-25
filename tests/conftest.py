@@ -33,6 +33,8 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "OPENAI_API_KEY",
         "OPENAI_MODEL_FAST",
         "OPENAI_MODEL_STRONG",
+        "JEV_FALLBACK_TIER",
+        "MODEL_TIERS_PATH",
         "DATABASE_URL",
         "LOG_LEVEL",
     ):

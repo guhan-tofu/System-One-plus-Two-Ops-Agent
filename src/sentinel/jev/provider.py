@@ -10,7 +10,6 @@ from collections.abc import Mapping
 from typing import Protocol, runtime_checkable
 
 from sentinel.config import Settings
-from sentinel.jev.errors import JevConfigError
 from sentinel.jev.models import JevResult, Question, State
 
 
@@ -41,4 +40,6 @@ def build_provider(settings: Settings) -> JevProvider:
 
             return TypeSafeProvider.from_settings(settings)
         case "llm_fallback":
-            raise JevConfigError("llm_fallback provider is not implemented yet (Phase 2)")
+            from sentinel.jev.llm_fallback import LLMFallbackProvider
+
+            return LLMFallbackProvider.from_settings(settings)

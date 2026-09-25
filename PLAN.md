@@ -170,6 +170,11 @@ Implementation requirements:
   index as strings (`"0"`, `"1"`, …). Errors use `{"code": -1, "message"}` (e.g. 502
   for an unknown model). **No model ID is returned** (body or headers): we audit the
   requested model with `model_verified=false` until the vendor echoes one.
+- **Confidence semantics (fitted to live samples; `jev/confidence.py`)**: choice =
+  `(n·p_max − 1)/(n − 1)`; score = `1 − E|level − modal level| / D_n`, where `D_n`
+  is the mean distance from the middle level under a uniform distribution. Score
+  value = expected level index. `llm_fallback` derives confidence the same way so
+  thresholds mean the same thing across providers.
 - Always record the returned `model` field (versioned ID) in the audit log.
 - Retries: exponential backoff with jitter on 429 and 529 only (max 4 attempts);
   no retry on 401/422. 422 errors surface the offending field in the exception.

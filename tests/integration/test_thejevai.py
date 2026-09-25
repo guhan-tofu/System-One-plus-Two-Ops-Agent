@@ -212,8 +212,7 @@ async def test_factory_builds_thejevai() -> None:
     await p.aclose()
 
 
-@pytest.mark.parametrize("name", ["typesafe", "llm_fallback"])
-def test_factory_unimplemented_providers(name: str) -> None:
-    settings = Settings(jev_api_key=SecretStr(FAKE_KEY), jev_provider=name)  # type: ignore[arg-type]
+def test_factory_typesafe_not_implemented() -> None:
+    settings = Settings(jev_api_key=SecretStr(FAKE_KEY), jev_provider="typesafe")
     with pytest.raises(JevConfigError):
         build_provider(settings)

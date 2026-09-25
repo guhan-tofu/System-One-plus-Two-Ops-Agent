@@ -47,6 +47,10 @@ MAX_ATTEMPTS = 4
 _DETAIL_LIMIT = 300
 
 
+def default_retry_wait() -> wait_base:
+    return wait_exponential_jitter(initial=0.5, max=8.0, jitter=0.5)
+
+
 class TheJevAIProvider:
     name = "thejevai"
 
@@ -68,7 +72,7 @@ class TheJevAIProvider:
         self._owns_client = client is None
         self._client = client or httpx.AsyncClient(timeout=DEFAULT_TIMEOUT)
         self._max_attempts = max_attempts
-        self._retry_wait = retry_wait or wait_exponential_jitter(initial=0.5, max=8.0, jitter=0.5)
+        self._retry_wait = retry_wait or default_retry_wait()
 
     @classmethod
     def from_settings(

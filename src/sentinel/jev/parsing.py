@@ -157,6 +157,7 @@ def parse_response(
     returned_model = find_model(data, result)
     usage = result.get("usage")
     return JevResult(
+        provider="thejevai",
         model=returned_model or requested_model,
         model_verified=returned_model is not None,
         answers=answers,

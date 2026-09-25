@@ -12,6 +12,8 @@ def test_defaults() -> None:
     assert s.jev_model == "jev-latest"
     assert s.database_url.startswith("sqlite")
     assert s.jev_api_key.get_secret_value() == ""
+    assert s.jev_fallback_tier == "fast"
+    assert str(s.model_tiers_path) == "policies/model_tiers.yaml"
 
 
 def test_reads_env(monkeypatch: pytest.MonkeyPatch) -> None:

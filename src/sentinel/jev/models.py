@@ -121,10 +121,12 @@ Answer = ChoiceAnswer | ScoreAnswer | NoulAnswer
 class JevResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
+    provider: str
+    """Which JevProvider answered, e.g. "thejevai" or "llm_fallback"."""
     model: str
     """Model ID to audit: the vendor's if it returned one, else the one we requested."""
     model_verified: bool
-    """True only if the vendor echoed a model ID. thejevai.com currently does not."""
+    """True only if the provider reported the model ID. thejevai.com currently does not."""
     answers: dict[str, Answer]
     usage: dict[str, Any] | None = None
     credits_used: float | None = None

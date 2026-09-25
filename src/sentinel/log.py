@@ -13,8 +13,14 @@ REDACTED = "[REDACTED]"
 _SENSITIVE_MARKERS = ("key", "secret", "token", "password", "authorization", "cookie")
 
 
+# Token *counts* (input_tokens, output_tokens, ...) are accounting data, not secrets.
+_COUNT_SUFFIX = "_tokens"
+
+
 def _is_sensitive(name: str) -> bool:
     lowered = name.lower()
+    if lowered.endswith(_COUNT_SUFFIX) and lowered != _COUNT_SUFFIX.lstrip("_"):
+        return False
     return any(marker in lowered for marker in _SENSITIVE_MARKERS)
 
 
