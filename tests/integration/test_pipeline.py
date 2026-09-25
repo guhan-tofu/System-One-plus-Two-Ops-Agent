@@ -12,15 +12,23 @@ from pydantic import SecretStr
 from sentinel.agent.pipeline import Pipeline
 from sentinel.jev.errors import JevOverloadedError
 from sentinel.llm.openai_client import OpenAIClient
-from sentinel.policy.engine import Thresholds
+from sentinel.policy.engine import Thresholds, ToolPolicy
 from sentinel.storage.audit import AuditLog
 from sentinel.storage.db import make_engine
+from sentinel.storage.review import ReviewQueue
 from sentinel.tools.builtin import default_registry
 from sentinel.tools.registry import Risk, Tool, ToolRegistry
 from tests.fixtures.openai import RESPONSES_URL, error_body, response_body
-from tests.fixtures.pipeline import ScriptedJev, route_answers, triage_answers, work_item
+from tests.fixtures.pipeline import (
+    ScriptedJev,
+    draft_json,
+    route_answers,
+    triage_answers,
+    work_item,
+)
 
-THRESHOLDS = Path(__file__).parents[2] / "policies" / "thresholds.yaml"
+POLICIES = Path(__file__).parents[2] / "policies"
+THRESHOLDS = POLICIES / "thresholds.yaml"
 FAKE_KEY = "fake-openai-key-for-tests"  # pragma: allowlist secret
 DRAFT = "Thanks for reaching out. Our billing team will review the duplicate charge."
 
@@ -28,6 +36,11 @@ DRAFT = "Thanks for reaching out. Our billing team will review the duplicate cha
 @pytest.fixture
 def audit(tmp_path: Path) -> AuditLog:
     return AuditLog(make_engine(f"sqlite:///{tmp_path / 'audit.db'}"))
+
+
+@pytest.fixture
+def queue(tmp_path: Path) -> ReviewQueue:
+    return ReviewQueue(make_engine(f"sqlite:///{tmp_path / 'audit.db'}"))
 
 
 @pytest.fixture
@@ -46,6 +59,7 @@ def make_pipeline(
     *,
     fallback: ScriptedJev | None = None,
     tools: ToolRegistry | None = None,
+    queue: ReviewQueue | None = None,
 ) -> Pipeline:
     return Pipeline(
         jev=jev,
@@ -54,6 +68,8 @@ def make_pipeline(
         audit=audit,
         thresholds=Thresholds.load(THRESHOLDS),
         tools=tools or default_registry(),
+        tool_policy=ToolPolicy.load(POLICIES / "tools.yaml"),
+        queue=queue or ReviewQueue(audit._engine),
     )
 
 
@@ -63,17 +79,18 @@ def stages(outcome: Any) -> list[str]:
 
 @respx.mock
 async def test_lookup_path_produces_draft(llm: OpenAIClient, audit: AuditLog) -> None:
-    route = respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    route = respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     jev = ScriptedJev(
         triage=triage_answers(path="lookup"), route_model=route_answers("strong", 0.8)
     )
     outcome = await make_pipeline(jev, llm, audit).run(work_item())
 
-    assert outcome.status == "draft_ready"
+    assert outcome.status == "ready_to_send"
     assert outcome.tier == "strong"
     assert outcome.draft == DRAFT
     assert stages(outcome) == [
-        "ingest", "build_state", "triage", "enrich", "route_model", "generate", "decide",
+        "ingest", "build_state", "triage", "enrich", "route_model", "generate", "verify",
+        "decide",
     ]  # fmt: skip
 
     # Models only ever see redacted, minimal state.
@@ -94,7 +111,9 @@ async def test_lookup_path_produces_draft(llm: OpenAIClient, audit: AuditLog) ->
 
 @respx.mock
 async def test_every_stage_is_audited_with_model_id(llm: OpenAIClient, audit: AuditLog) -> None:
-    respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT, model="fake-model-2026"))
+    respx.post(RESPONSES_URL).respond(
+        200, json=response_body(draft_json(DRAFT), model="fake-model-2026")
+    )
     jev = ScriptedJev(triage=triage_answers(path="lookup"), route_model=route_answers())
     outcome = await make_pipeline(jev, llm, audit).run(work_item())
 
@@ -108,16 +127,16 @@ async def test_every_stage_is_audited_with_model_id(llm: OpenAIClient, audit: Au
     assert by_stage["route_model"].model == "fake_jev-model-1"
     assert by_stage["generate"].model == "fake-model-2026"
     assert by_stage["generate"].model_verified is True
-    assert by_stage["decide"].detail["outcome"] == "draft_ready"
+    assert by_stage["decide"].detail["outcome"] == "ready_to_send"
 
 
 @respx.mock
 async def test_generate_path_skips_enrich(llm: OpenAIClient, audit: AuditLog) -> None:
-    route = respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    route = respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     jev = ScriptedJev(triage=triage_answers(path="generate"), route_model=route_answers("fast"))
     outcome = await make_pipeline(jev, llm, audit).run(work_item())
 
-    assert outcome.status == "draft_ready" and outcome.tier == "fast"
+    assert outcome.status == "ready_to_send" and outcome.tier == "fast"
     enrich = next(r for r in outcome.trace if r.stage == "enrich")
     assert enrich.detail["ran"] is False
     assert json.loads(route.calls.last.request.content)["model"] == "fake-fast"
@@ -137,7 +156,7 @@ async def test_generate_path_skips_enrich(llm: OpenAIClient, audit: AuditLog) ->
 async def test_triage_escalations_stop_before_llm(
     llm: OpenAIClient, audit: AuditLog, triage_kw: dict[str, Any], reason: str
 ) -> None:
-    route = respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    route = respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     jev = ScriptedJev(triage=triage_answers(**triage_kw), route_model=route_answers())
     outcome = await make_pipeline(jev, llm, audit).run(work_item())
 
@@ -151,7 +170,7 @@ async def test_triage_escalations_stop_before_llm(
 
 @respx.mock
 async def test_low_route_confidence_uses_policy_default(llm: OpenAIClient, audit: AuditLog) -> None:
-    route = respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    route = respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     jev = ScriptedJev(triage=triage_answers(), route_model=route_answers("fast", 0.4))
     outcome = await make_pipeline(jev, llm, audit).run(work_item())
     assert outcome.tier == "strong"
@@ -165,7 +184,7 @@ async def test_low_route_confidence_uses_policy_default(llm: OpenAIClient, audit
 async def test_jev_failure_escalates_without_fallback(
     llm: OpenAIClient, audit: AuditLog, stage: str
 ) -> None:
-    respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     script: dict[str, Any] = {"triage": triage_answers(), "route_model": route_answers()}
     script[stage] = JevOverloadedError("HTTP 529: overloaded", status_code=529)
     outcome = await make_pipeline(ScriptedJev(**script), llm, audit).run(work_item())
@@ -178,7 +197,7 @@ async def test_jev_failure_escalates_without_fallback(
 
 @respx.mock
 async def test_jev_failure_uses_fallback_provider(llm: OpenAIClient, audit: AuditLog) -> None:
-    respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     primary = ScriptedJev(
         triage=JevOverloadedError("HTTP 529: overloaded", status_code=529),
         route_model=route_answers(),
@@ -188,7 +207,7 @@ async def test_jev_failure_uses_fallback_provider(llm: OpenAIClient, audit: Audi
     )
     outcome = await make_pipeline(primary, llm, audit, fallback=fallback).run(work_item())
 
-    assert outcome.status == "draft_ready"
+    assert outcome.status == "ready_to_send"
     triaged = next(r for r in outcome.trace if r.stage == "triage")
     assert triaged.provider == "llm_fallback"
     assert "JevOverloadedError" in triaged.detail["primary_error"]
@@ -208,10 +227,10 @@ async def test_llm_failure_escalates(llm: OpenAIClient, audit: AuditLog) -> None
 
 @respx.mock
 async def test_missing_customer_reference(llm: OpenAIClient, audit: AuditLog) -> None:
-    respx.post(RESPONSES_URL).respond(200, json=response_body(DRAFT))
+    respx.post(RESPONSES_URL).respond(200, json=response_body(draft_json(DRAFT)))
     jev = ScriptedJev(triage=triage_answers(path="lookup"), route_model=route_answers())
     outcome = await make_pipeline(jev, llm, audit).run(work_item(customer_id=None))
-    assert outcome.status == "draft_ready"
+    assert outcome.status == "ready_to_send"
     assert jev.calls[1][0]["account"] == {"found": False}
 
 
@@ -227,17 +246,20 @@ async def test_tool_failure_escalates(llm: OpenAIClient, audit: AuditLog) -> Non
     assert outcome.reasons == ["enrich: lookup_customer failed"]
 
 
-async def test_enrich_refuses_side_effecting_tool(llm: OpenAIClient, audit: AuditLog) -> None:
+async def test_registry_policy_mismatch_refuses_to_start(
+    llm: OpenAIClient, audit: AuditLog
+) -> None:
     async def refund(customer_id: str) -> dict[str, Any]:
         raise AssertionError("must never run")
 
+    # lookup_customer is read_only in policies/tools.yaml; a registry claiming
+    # otherwise must not start, so enrich can never run a side-effecting tool.
     tools = ToolRegistry([Tool("lookup_customer", "x", Risk.DESTRUCTIVE, refund)])
-    jev = ScriptedJev(triage=triage_answers(path="lookup"), route_model=route_answers())
-    with pytest.raises(RuntimeError, match="not read-only"):
-        await make_pipeline(jev, llm, audit, tools=tools).run(work_item())
+    with pytest.raises(ValueError, match="risk"):
+        make_pipeline(ScriptedJev(), llm, audit, tools=tools)
 
 
-async def test_audit_failure_stops_the_pipeline(llm: OpenAIClient) -> None:
+async def test_audit_failure_stops_the_pipeline(llm: OpenAIClient, queue: ReviewQueue) -> None:
     class BrokenAudit(AuditLog):
         def __init__(self) -> None:
             pass
@@ -247,5 +269,5 @@ async def test_audit_failure_stops_the_pipeline(llm: OpenAIClient) -> None:
 
     jev = ScriptedJev(triage=triage_answers(), route_model=route_answers())
     with pytest.raises(OSError):
-        await make_pipeline(jev, llm, BrokenAudit()).run(work_item())
+        await make_pipeline(jev, llm, BrokenAudit(), queue=queue).run(work_item())
     assert jev.calls == []

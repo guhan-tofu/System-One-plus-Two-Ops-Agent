@@ -191,6 +191,8 @@ Implementation requirements:
   thresholds mean the same thing across providers.
 - Always record the returned `model` field (versioned ID) in the audit log.
 - Retries: exponential backoff with jitter on 429 and 529 only (max 4 attempts);
+  the Vercel provider also retries 503, which the gateway returns for intermittent
+  upstream failures ("try again shortly"; ~50% of calls in the first eval run);
   no retry on 401/422. 422 errors surface the offending field in the exception.
 - Timeouts: 5s connect / 10s read. On final failure → fallback provider or
   human queue (configurable), never silent default answers.
@@ -251,6 +253,15 @@ VERIFY = {
         },
     ),
 }
+
+# When no tools ran, verify uses this instead (VERIFY's "supported by
+# tool_results" is ill-posed with empty results and flags harmless replies).
+VERIFY_REPLY = {
+    "claim_supported": noul(
+        "Is every factual claim in `draft` supported by `account` or `customer_message`? "
+        "Questions and offers of help are not factual claims."
+    ),
+}
 ```
 
 ## 8. Decision policy (policies/thresholds.yaml)
@@ -301,7 +312,8 @@ human review queue table.
 **Phase 5 — Evals**
 50–200 labeled items in `evals/datasets/`. Metrics: accuracy per question,
 Brier score, calibration table (10 bins), p50/p95 latency, cost per item.
-Compare `thejevai` vs `llm_fallback` side by side.
+Compare providers side by side (`vercel`, `llm_fallback`, `thejevai`).
+`sentinel eval -p vercel -p llm_fallback [--rate 1]`; code in `src/sentinel/evals/`.
 *Accept:* `sentinel eval` writes a markdown report to `evals/reports/`.
 
 **Phase 6 — Service**
@@ -311,6 +323,10 @@ FastAPI endpoints, background processing, `/review` approve/reject endpoints.
 **Phase 7 — Hardening**
 Rate limiting, circuit breaker on Jev provider, prompt-injection tests (instructions
 embedded in tickets must not change routing or trigger tools), Dockerfile.
+*Done:* `jev/resilience.py` (rate limit + circuit breaker, wrapped around every Jev
+provider in the pipeline), `POST /items` rate limit and size caps,
+`tests/integration/test_prompt_injection.py` (mocked, worst-case hijacked model) and
+`test_live_injection.py` (real Jev/OpenAI), `Dockerfile` (non-root, secrets at runtime).
 
 ## 10. Testing rules
 

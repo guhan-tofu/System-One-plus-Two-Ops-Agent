@@ -93,3 +93,12 @@ VERIFY: dict[str, Question] = {
         },
     ),
 }
+
+# Used instead of VERIFY when no tools ran: there are no tool results to check
+# against, so claims are checked against the account data and the customer's message.
+VERIFY_REPLY: dict[str, Question] = {
+    "claim_supported": noul(
+        "Is every factual claim in `draft` supported by `account` or `customer_message`? "
+        "Questions and offers of help are not factual claims."
+    ),
+}

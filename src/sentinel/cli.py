@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any
 
@@ -153,7 +154,29 @@ def _stage_summary(record: StageRecord) -> str:
             return f"{d.get('tool')} found={d.get('found')}"
         case "generate" if "draft" in d:
             u = d["usage"]
-            return f"tier={d['tier']} tokens in/out={u['input_tokens']}/{u['output_tokens']}"
+            calls = ", ".join(c["tool"] for c in d.get("tool_calls", [])) or "none"
+            return (
+                f"tier={d['tier']} tokens in/out={u['input_tokens']}/{u['output_tokens']}"
+                f"  proposed tools: {calls}"
+            )
+        case "guard" if "decision" in d:
+            g = d["decision"]
+            safe = "" if g.get("safe") is None else f"  jev safe={g['safe']:.2f}"
+            why = f"  ({'; '.join(g['reasons'])})" if g.get("reasons") else ""
+            return (
+                f"{g['call']['tool']}: policy={g['policy']['action']}{safe} -> {g['action']}{why}"
+            )
+        case "execute":
+            if d.get("ok"):
+                return f"{d.get('tool')} ok"
+            return f"{d.get('tool')} FAILED: {d.get('error')}"
+        case "verify":
+            if d.get("deterministic"):
+                return "failed tool -> escalate (Jev not asked)"
+            if "decision" in d:
+                v = d["decision"]
+                status = f"  task_status={v['task_status']}" if v["task_status"] else ""
+                return f"claim_supported={v['claim_supported']:.2f}{status}"
         case "decide":
             cost = d.get("total_cost_usd")
             cost_s = "unknown" if cost is None else f"${cost:.5f}"
@@ -180,12 +203,115 @@ def format_trace(outcome: Outcome) -> str:
         if summary:
             lines.append(f"{'':15}{summary}")
     lines.append("")
-    if outcome.status == "escalated":
-        lines.append("ESCALATED to human queue:")
-        lines += [f"  - {reason}" for reason in outcome.reasons]
+    if outcome.tool_calls:
+        lines.append("Tool calls:")
+        lines += [f"  - {c.tool} {json.dumps(c.args)}" for c in outcome.tool_calls]
+        lines.append("")
+    if outcome.status == "ready_to_send":
+        lines.append(f"READY TO SEND (tier {outcome.tier}; verified against tool results):")
     else:
-        lines.append(
-            f"DRAFT READY (tier {outcome.tier}; not sent, guard/verify arrive in Phase 4):"
-        )
-        lines += ["", *(f"  {line}" for line in (outcome.draft or "").splitlines())]
+        label = "AWAITING APPROVAL" if outcome.status == "awaiting_approval" else "ESCALATED"
+        lines.append(f"{label} (review #{outcome.review_id}):")
+        lines += [f"  - {reason}" for reason in outcome.reasons]
+    if outcome.draft:
+        lines += ["", *(f"  {line}" for line in outcome.draft.splitlines())]
     return "\n".join(lines)
+
+
+@app.command("eval")
+def eval_command(
+    dataset: Annotated[
+        Path, typer.Option(exists=True, dir_okay=False, help="Labeled JSONL dataset.")
+    ] = Path("evals/datasets/triage.jsonl"),
+    provider: Annotated[
+        list[str] | None,
+        typer.Option("--provider", "-p", help="Jev provider to evaluate (repeatable)."),
+    ] = None,
+    out: Annotated[Path, typer.Option(help="Report directory.")] = Path("evals/reports"),
+    concurrency: Annotated[int, typer.Option(min=1, max=16)] = 4,
+    limit: Annotated[int | None, typer.Option(min=1, help="Only the first N items.")] = None,
+    rate: Annotated[
+        float | None,
+        typer.Option(min=0.1, help="Max requests/second per provider (gateway free tier)."),
+    ] = None,
+) -> None:
+    """Evaluate Jev providers on a labeled dataset and write a markdown report."""
+    from sentinel.evals.dataset import load_dataset
+    from sentinel.evals.report import render
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    items = load_dataset(dataset)[:limit]
+    names = provider or ["vercel", "llm_fallback"]
+    scores = asyncio.run(_eval(names, items, concurrency, rate))
+
+    now = datetime.now(UTC)
+    out.mkdir(parents=True, exist_ok=True)
+    stem = f"{now:%Y%m%d-%H%M%S}-{dataset.stem}"
+    report_path = out / f"{stem}.md"
+    report_path.write_text(
+        render(
+            dataset=dataset,
+            items=items,
+            scores=scores,
+            generated_at=now,
+            thresholds_path=settings.thresholds_path,
+        ),
+        encoding="utf-8",
+    )
+    typer.echo(f"report: {report_path}")
+    for s in scores:
+        acc = s.questions["category"].accuracy
+        typer.echo(
+            f"  {s.provider}: errors {len(s.errors)}/{s.n_items}, "
+            f"category accuracy {'-' if acc is None else f'{100 * acc:.1f}%'}"
+        )
+
+
+async def _eval(
+    names: list[str], items: list[Any], concurrency: int, rate: float | None
+) -> list[Any]:
+    from sentinel.evals.runner import ItemRun, ProviderRun, run_provider, score_run
+    from sentinel.jev.provider import build_provider
+    from sentinel.policy.engine import Thresholds
+
+    settings = get_settings()
+    policy = Thresholds.load(settings.thresholds_path).triage
+    scores = []
+    for name in names:
+        try:
+            jev = build_provider(settings.model_copy(update={"jev_provider": name}))
+        except (JevError, ValueError) as exc:
+            error = f"provider not available: {exc}"
+            run = ProviderRun(
+                provider=name,
+                runs=[ItemRun(item=i, result=None, error=error) for i in items],
+                wall_s=0.0,
+            )
+        else:
+            try:
+                run = await run_provider(jev, items, concurrency=concurrency, max_rate=rate)
+            finally:
+                await jev.aclose()
+        scores.append(score_run(run, policy))
+    return scores
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option()] = "127.0.0.1",
+    port: Annotated[int, typer.Option()] = 8000,
+) -> None:
+    """Run the HTTP API (requires SENTINEL_API_TOKEN)."""
+    import uvicorn
+
+    from sentinel.api.app import create_app
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    try:
+        api = create_app(settings)
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from None
+    uvicorn.run(api, host=host, port=port, log_level=settings.log_level.lower())

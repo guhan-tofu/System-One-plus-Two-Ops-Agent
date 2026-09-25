@@ -246,6 +246,9 @@ class VercelJevProvider(HTTPJevProvider):
     name = "vercel"
     key_env: ClassVar[str] = "AI_GATEWAY_API_KEY"
     validation_statuses: ClassVar[tuple[int, ...]] = (400, 422)
+    # The gateway answers intermittent upstream failures with 503 "Service temporarily
+    # unavailable. Please try again shortly." (~50% of calls in the 2026-09-25 eval).
+    retry_statuses: ClassVar[tuple[int, ...]] = (503, 529)
 
     @classmethod
     def from_settings(

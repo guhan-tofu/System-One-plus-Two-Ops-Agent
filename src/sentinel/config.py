@@ -44,12 +44,24 @@ class Settings(BaseSettings):
 
     jev_fallback_tier: LLMTier = "fast"
     """OpenAI tier used when JEV_PROVIDER=llm_fallback emulates Jev."""
+    jev_max_rps: float | None = 2.0
+    """Client-side cap on Jev requests/second (Vercel free tier throttles ~3 req/s)."""
+    jev_breaker_failures: int = 5
+    """Consecutive transient Jev failures that open the circuit breaker."""
+    jev_breaker_reset_s: float = 30.0
+    """How long an open circuit refuses calls before one trial request."""
+    api_max_items_per_minute: int = 60
+    """POST /items limit for the HTTP API (429 above it)."""
     jev_on_failure: Literal["human", "llm_fallback"] = "human"
     """When the Jev provider fails: escalate to a human, or retry on llm_fallback."""
 
     thresholds_path: Path = Path("policies/thresholds.yaml")
+    tools_policy_path: Path = Path("policies/tools.yaml")
 
     database_url: str = "sqlite:///./sentinel.db"
+
+    sentinel_api_token: SecretStr = SecretStr("")
+    """Bearer token for the HTTP API (SENTINEL_API_TOKEN). Required to serve."""
     log_level: LogLevel = "INFO"
 
 

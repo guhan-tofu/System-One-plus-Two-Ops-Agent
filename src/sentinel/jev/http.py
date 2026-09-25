@@ -1,6 +1,7 @@
 """Shared HTTP machinery for Jev providers (thejevai.com, Vercel AI Gateway).
 
-- Retries 429/529 only, exponential backoff with jitter, max 4 attempts.
+- Retries 429/529 (plus any provider-specific `retry_statuses`), exponential
+  backoff with jitter, max 4 attempts.
 - Auth failures, validation errors, other statuses, timeouts and transport
   errors fail immediately.
 - The API key is sent per request and never logged or put in exception text.
@@ -57,6 +58,8 @@ class HTTPJevProvider(ABC):
     """Env var holding the key, named in config errors."""
     validation_statuses: ClassVar[tuple[int, ...]] = (422,)
     """Statuses meaning "the provider rejected our request" (surfaced with the field)."""
+    retry_statuses: ClassVar[tuple[int, ...]] = (529,)
+    """Transient "overloaded" statuses retried like 529 (429 is always retried)."""
 
     def __init__(
         self,
@@ -172,8 +175,10 @@ class HTTPJevProvider(ABC):
             raise JevValidationError(f"HTTP {status}: {detail}", field=field)
         if status == 429:
             raise JevRateLimitError("HTTP 429: rate limited", status_code=status)
-        if status == 529:
-            raise JevOverloadedError("HTTP 529: overloaded", status_code=status)
+        if status in self.retry_statuses:
+            raise JevOverloadedError(
+                _status_detail(status, response, "overloaded"), status_code=status
+            )
         raise JevHTTPError(_status_detail(status, response), status_code=status)
 
     def _log_retry(self, state: RetryCallState) -> None:

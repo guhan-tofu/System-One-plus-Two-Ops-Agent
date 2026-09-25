@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import Mapping
 from typing import Any
 
@@ -55,6 +56,17 @@ def route_answers(tier: str = "fast", confidence: float = 0.9) -> dict[str, Answ
     return {"tier": choice(tier, confidence, ["fast", "strong"])}
 
 
+def guard_answers(safe: float = 0.97) -> dict[str, Answer]:
+    return {"safe_to_run": NoulAnswer(type="noul", noul=safe)}
+
+
+def verify_answers(supported: float = 0.95, status: str = "complete") -> dict[str, Answer]:
+    return {
+        "claim_supported": NoulAnswer(type="noul", noul=supported),
+        "task_status": choice(status, 0.9, ["complete", "verify_more", "failed"]),
+    }
+
+
 def jev_result(answers: dict[str, Answer], provider: str = "fake_jev") -> JevResult:
     return JevResult(
         provider=provider,
@@ -66,26 +78,62 @@ def jev_result(answers: dict[str, Answer], provider: str = "fake_jev") -> JevRes
     )
 
 
+def _stage_for(questions: Mapping[str, Question]) -> str:
+    if "category" in questions:
+        return "triage"
+    if "tier" in questions:
+        return "route_model"
+    if "safe_to_run" in questions:
+        return "guard"
+    return "verify"
+
+
 class ScriptedJev:
-    """In-memory JevProvider: returns (or raises) the scripted value per question set."""
+    """In-memory JevProvider: returns (or raises) the scripted value per stage.
+
+    Stages default to confident "happy path" answers; override any of them.
+    """
 
     def __init__(self, name: str = "fake_jev", **script: dict[str, Answer] | JevError) -> None:
         self.name = name
-        self.script = script  # keys: "triage", "route_model"
+        self.script: dict[str, dict[str, Answer] | JevError] = {
+            "triage": triage_answers(),
+            "route_model": route_answers(),
+            "guard": guard_answers(),
+            "verify": verify_answers(),
+            **script,
+        }
         self.calls: list[tuple[State, list[str]]] = []
+
+    def states(self, stage: str) -> list[State]:
+        return [s for s, qs in self.calls if _stage_for(dict.fromkeys(qs)) == stage]
 
     async def evaluate(
         self, state: State, questions: Mapping[str, Question], model: str | None = None
     ) -> JevResult:
         self.calls.append((state, sorted(questions)))
-        key = "triage" if "category" in questions else "route_model"
-        value = self.script[key]
+        value = self.script[_stage_for(questions)]
         if isinstance(value, JevError):
             raise value
         return jev_result(value, provider=self.name)
 
     async def aclose(self) -> None:
         return None
+
+
+def draft_json(reply: str, *calls: dict[str, Any]) -> str:
+    """Structured-output body for the generate stage."""
+    return json.dumps({"reply": reply, "tool_calls": list(calls)})
+
+
+def refund_call(amount: float = 49.0, charge_id: str = "ch_502") -> dict[str, Any]:
+    return {
+        "tool": "issue_refund",
+        "charge_id": charge_id,
+        "amount": amount,
+        "currency": "GBP",
+        "reason": "duplicate charge",
+    }
 
 
 def work_item(**overrides: Any) -> WorkItem:

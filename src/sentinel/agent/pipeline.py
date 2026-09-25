@@ -1,10 +1,14 @@
-"""Orchestrates the read-only pipeline and returns an `Outcome` (PLAN.md section 4).
+"""Orchestrates the pipeline and returns an `Outcome` (PLAN.md section 4).
 
-ingest -> build_state -> triage -> [enrich] -> route_model -> generate -> decide
+ingest -> build_state -> triage -> [enrich] -> route_model -> generate
+       -> guard -> execute -> verify -> decide
 
 - Every stage is appended to the trace and written to the audit log as it happens.
-- Any failure escalates to a human with a reason; nothing is ever defaulted silently.
-- Phase 3 has no side effects: the draft is returned, never sent.
+- Any failure escalates to the human review queue with a reason; nothing is ever
+  defaulted silently.
+- Tools run only after the guard (deterministic policy first, then Jev); a draft
+  is ready to send only after verify has checked it against the tool results.
+- Sending the reply is not implemented yet: `ready_to_send` is the final state.
 """
 
 from __future__ import annotations
@@ -14,27 +18,31 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
-from sentinel.agent import generate, routing, triage
+from sentinel.agent import generate, guard, routing, triage, verify
+from sentinel.agent.guard import GuardDecision
 from sentinel.agent.models import (
     Outcome,
+    ProposedCall,
     StageName,
     StageRecord,
     StageStatus,
     WorkItem,
 )
-from sentinel.agent.state import build_state, with_enrichment
+from sentinel.agent.state import build_state, redact, with_enrichment
 from sentinel.agent.triage import TriageDecision
 from sentinel.config import LLMTier, Settings
 from sentinel.jev.errors import JevError
 from sentinel.jev.models import JevResult, Question
 from sentinel.jev.provider import JevProvider, build_provider
+from sentinel.jev.resilience import harden
 from sentinel.llm.openai_client import LLMError, OpenAIClient
 from sentinel.log import get_logger
-from sentinel.policy.engine import Thresholds
+from sentinel.policy.engine import Thresholds, ToolPolicy
 from sentinel.storage.audit import AuditLog
 from sentinel.storage.db import make_engine
+from sentinel.storage.review import ReviewKind, ReviewQueue
 from sentinel.tools.builtin import default_registry
-from sentinel.tools.registry import Risk, ToolRegistry
+from sentinel.tools.registry import Risk, ToolRegistry, ToolResult
 
 log = get_logger(__name__)
 
@@ -46,11 +54,15 @@ ENRICH_FIELDS = ("found", "plan", "status", "recent_charges", "open_incidents")
 class _Run:
     """Collects the trace for one item and audits each record as it is added."""
 
-    def __init__(self, item: WorkItem, audit: AuditLog) -> None:
+    def __init__(self, item: WorkItem, audit: AuditLog, queue: ReviewQueue) -> None:
         self.run_id = uuid.uuid4().hex
         self.item = item
         self.audit = audit
+        self.queue = queue
         self.trace: list[StageRecord] = []
+        self.tier: LLMTier | None = None
+        self.draft: str | None = None
+        self.calls: list[ProposedCall] = []
 
     def add(self, record: StageRecord) -> None:
         self.audit.record(self.run_id, self.item.id, record)
@@ -88,24 +100,51 @@ class _Run:
             )
         )
 
-    def escalate(self, reasons: list[str]) -> Outcome:
-        self.stage("decide", "escalate", outcome="escalated", reasons=reasons, **self._totals())
+    def escalate(
+        self, reasons: list[str], *, kind: ReviewKind = "review", **payload: Any
+    ) -> Outcome:
+        """Send the item to the human review queue and finish the run."""
+        review_id = self.queue.enqueue(
+            run_id=self.run_id,
+            item_id=self.item.id,
+            kind=kind,
+            reasons=reasons,
+            payload={
+                "draft": self.draft,
+                "tool_calls": [c.model_dump() for c in self.calls],
+                **payload,
+            },
+        )
+        status = "awaiting_approval" if kind == "approval" else "escalated"
+        self.stage(
+            "decide",
+            "escalate",
+            outcome=status,
+            reasons=reasons,
+            review_id=review_id,
+            **self._totals(),
+        )
         return Outcome(
             run_id=self.run_id,
             item_id=self.item.id,
-            status="escalated",
+            status=status,
             reasons=reasons,
+            review_id=review_id,
+            tier=self.tier,
+            draft=self.draft,
+            tool_calls=self.calls,
             trace=self.trace,
         )
 
-    def draft_ready(self, tier: LLMTier, draft: str) -> Outcome:
-        self.stage("decide", "ok", outcome="draft_ready", **self._totals())
+    def ready_to_send(self) -> Outcome:
+        self.stage("decide", "ok", outcome="ready_to_send", **self._totals())
         return Outcome(
             run_id=self.run_id,
             item_id=self.item.id,
-            status="draft_ready",
-            tier=tier,
-            draft=draft,
+            status="ready_to_send",
+            tier=self.tier,
+            draft=self.draft,
+            tool_calls=self.calls,
             trace=self.trace,
         )
 
@@ -127,14 +166,19 @@ class Pipeline:
         audit: AuditLog,
         thresholds: Thresholds,
         tools: ToolRegistry,
+        tool_policy: ToolPolicy,
+        queue: ReviewQueue,
         jev_fallback: JevProvider | None = None,
     ) -> None:
+        tool_policy.check_registry(tools)  # every tool needs a rule; risks must agree
         self._jev = jev
         self._jev_fallback = jev_fallback
         self._llm = llm
         self._audit = audit
         self._thresholds = thresholds
         self._tools = tools
+        self._tool_policy = tool_policy
+        self._queue = queue
 
     async def aclose(self) -> None:
         await self._jev.aclose()
@@ -143,7 +187,7 @@ class Pipeline:
         await self._llm.aclose()
 
     async def run(self, item: WorkItem) -> Outcome:
-        run = _Run(item, self._audit)
+        run = _Run(item, self._audit, self._queue)
         started = time.perf_counter()
         run.stage("ingest", "ok", source=item.source, has_customer_id=item.customer_id is not None)
 
@@ -187,15 +231,65 @@ class Pipeline:
             "route_model", "ok", result, decision=route.model_dump(), primary_error=primary_error
         )
 
-        # --- generate (OpenAI draft; not sent) ---
-        draft = await self._generate(run, route.tier, state, decision)
-        if draft is None:
+        run.tier = route.tier
+
+        # --- generate (OpenAI: reply + proposed tool calls) ---
+        if not await self._generate(run, route.tier, state, decision):
             return run.escalate(["generate: draft failed"])
+
+        # --- guard (policy first, then Jev) -> execute -> verify ---
+        decisions = await self._guard(run, item, state)
+        blocked = [r for d in decisions if d.action == "block" for r in d.reasons]
+        if blocked:
+            return run.escalate(blocked, guard=[d.model_dump() for d in decisions])
+        needs_approval = [r for d in decisions if d.action == "approval" for r in d.reasons]
+        if needs_approval:
+            return run.escalate(
+                needs_approval, kind="approval", guard=[d.model_dump() for d in decisions]
+            )
+
+        results = await self._execute(run, item)
+        reasons = await self._verify(run, state, results)
+        if reasons:
+            return run.escalate(reasons, tool_results=[r.model_dump() for r in results])
 
         log.info(
             "pipeline.done", run_id=run.run_id, ms=round((time.perf_counter() - started) * 1000)
         )
-        return run.draft_ready(route.tier, draft)
+        return run.ready_to_send()
+
+    async def resume_approved(
+        self, item: WorkItem, review_id: int, payload: dict[str, Any], *, approver: str
+    ) -> Outcome:
+        """A human approved the held tool calls: run them, then verify the draft.
+
+        Approval lifts "needs approval", never "block": the deterministic policy is
+        re-checked and a blocked call escalates again without running anything.
+        """
+        run = _Run(item, self._audit, self._queue)
+        run.draft = payload.get("draft")
+        run.calls = [ProposedCall.model_validate(c) for c in payload.get("tool_calls", [])]
+        run.stage("review", "ok", review_id=review_id, decision="approved", by=approver)
+
+        has_customer = item.customer_id is not None
+        verdicts = [
+            self._tool_policy.check(c.tool, c.args, has_customer=has_customer) for c in run.calls
+        ]
+        blocked = [r for v in verdicts if v.action == "block" for r in v.reasons]
+        if blocked:
+            return run.escalate(blocked)
+
+        state = build_state(item)
+        if item.customer_id is not None:
+            enriched = await self._enrich(run, item, state)
+            if enriched is None:
+                return run.escalate([f"enrich: {ENRICH_TOOL} failed"])
+            state = enriched
+        results = await self._execute(run, item)
+        reasons = await self._verify(run, state, results)
+        if reasons:
+            return run.escalate(reasons, tool_results=[r.model_dump() for r in results])
+        return run.ready_to_send()
 
     async def _ask(
         self, questions: Mapping[str, Question], state: dict[str, Any]
@@ -218,12 +312,11 @@ class Pipeline:
         if item.customer_id is None:
             run.stage("enrich", "ok", tool=tool.name, ran=False, reason="no customer reference")
             return with_enrichment(state, "account", {"found": False})
-        started = time.perf_counter()
-        try:
-            data = await tool.fn(item.customer_id)
-        except Exception as exc:
-            run.stage("enrich", "error", tool=tool.name, error=type(exc).__name__)
+        result = await self._tools.execute(tool.name, item.customer_id, {})
+        if not result.ok:
+            run.stage("enrich", "error", tool=tool.name, error=result.error)
             return None
+        data = result.data or {}
         run.add(
             StageRecord(
                 stage="enrich",
@@ -234,7 +327,7 @@ class Pipeline:
                     "found": data.get("found"),
                     "fields": sorted(data),
                 },
-                latency_ms=(time.perf_counter() - started) * 1000,
+                latency_ms=result.latency_ms,
             )
         )
         minimal = {k: data[k] for k in ENRICH_FIELDS if k in data}
@@ -242,16 +335,18 @@ class Pipeline:
 
     async def _generate(
         self, run: _Run, tier: LLMTier, state: dict[str, Any], decision: TriageDecision
-    ) -> str | None:
+    ) -> bool:
         try:
-            gen = await self._llm.generate(
+            output, gen = await self._llm.structured(
                 tier,
                 instructions=generate.INSTRUCTIONS,
-                input=generate.render_input(state, decision),
+                input=generate.render_input(state, decision, self._tools),
+                schema=generate.draft_schema(self._tools),
             )
         except LLMError as exc:
             run.stage("generate", "error", tier=tier, error=_describe(exc))
-            return None
+            return False
+        run.draft, run.calls = generate.parse_draft(output)
         run.add(
             StageRecord(
                 stage="generate",
@@ -260,7 +355,8 @@ class Pipeline:
                     "tier": tier,
                     "requested_model": gen.requested_model,
                     "usage": gen.usage.model_dump(),
-                    "draft": gen.text,
+                    "draft": run.draft,
+                    "tool_calls": [c.model_dump() for c in run.calls],
                 },
                 provider="openai",
                 model=gen.model,
@@ -269,7 +365,79 @@ class Pipeline:
                 cost_usd=gen.cost_usd,
             )
         )
-        return gen.text
+        return True
+
+    async def _guard(self, run: _Run, item: WorkItem, state: dict[str, Any]) -> list[GuardDecision]:
+        decisions: list[GuardDecision] = []
+        for call in run.calls:
+            verdict = self._tool_policy.check(
+                call.tool, call.args, has_customer=item.customer_id is not None
+            )
+            result: JevResult | None = None
+            primary_error: str | None = None
+            if verdict.action == "guard":  # policy permits; Jev must also be confident
+                tool = self._tools.get(call.tool)
+                try:
+                    result, primary_error = await self._ask(
+                        guard.QUESTIONS, redact(guard.guard_state(state, call, tool))
+                    )
+                except JevError as exc:
+                    run.stage("guard", "error", tool=call.tool, error=_describe(exc))
+            decision = guard.decide_guard(call, verdict, result, self._thresholds.guard)
+            status: StageStatus = "ok" if decision.action == "run" else "escalate"
+            detail = {"decision": decision.model_dump(), "primary_error": primary_error}
+            if result is not None:
+                run.jev_stage("guard", status, result, **detail)
+            else:
+                run.stage("guard", status, **detail)
+            decisions.append(decision)
+        return decisions
+
+    async def _execute(self, run: _Run, item: WorkItem) -> list[ToolResult]:
+        """Run the guarded calls in order; stop at the first failure."""
+        results: list[ToolResult] = []
+        if item.customer_id is None:  # policy blocks every call without one
+            return results
+        for call in run.calls:
+            result = await self._tools.execute(call.tool, item.customer_id, call.args)
+            run.add(
+                StageRecord(
+                    stage="execute",
+                    status="ok" if result.ok else "error",
+                    detail=result.model_dump(exclude={"latency_ms"}),
+                    latency_ms=result.latency_ms,
+                )
+            )
+            results.append(result)
+            if not result.ok:
+                break
+        return results
+
+    async def _verify(
+        self, run: _Run, state: dict[str, Any], results: list[ToolResult]
+    ) -> list[str]:
+        """Escalation reasons (empty when the draft is supported by the results)."""
+        failed = verify.failed_tools(results)
+        if failed:  # deterministic: a failed tool always escalates, Jev is not asked
+            run.stage("verify", "escalate", deterministic=True, reasons=failed)
+            return failed
+        try:
+            result, primary_error = await self._ask(
+                verify.questions_for(results),
+                redact(verify.verify_state(state, run.draft or "", results)),
+            )
+        except JevError as exc:
+            run.stage("verify", "error", error=_describe(exc))
+            return [f"verify: Jev unavailable ({type(exc).__name__})"]
+        decision = verify.decide_verify(results, result, self._thresholds.verify)
+        run.jev_stage(
+            "verify",
+            "escalate" if decision.escalate else "ok",
+            result,
+            decision=decision.model_dump(),
+            primary_error=primary_error,
+        )
+        return decision.escalate_reasons
 
 
 def _describe(exc: Exception) -> str:
@@ -278,15 +446,29 @@ def _describe(exc: Exception) -> str:
 
 def build_pipeline(settings: Settings) -> Pipeline:
     """Wire the pipeline from settings. Raises JevError/LLMError on misconfiguration."""
-    jev = build_provider(settings)
+
+    def hardened(provider: JevProvider) -> JevProvider:
+        return harden(
+            provider,
+            max_rps=settings.jev_max_rps,
+            failure_threshold=settings.jev_breaker_failures,
+            reset_after_s=settings.jev_breaker_reset_s,
+        )
+
+    jev = hardened(build_provider(settings))
     fallback: JevProvider | None = None
     if settings.jev_on_failure == "llm_fallback" and settings.jev_provider != "llm_fallback":
-        fallback = build_provider(settings.model_copy(update={"jev_provider": "llm_fallback"}))
+        fallback = hardened(
+            build_provider(settings.model_copy(update={"jev_provider": "llm_fallback"}))
+        )
+    engine = make_engine(settings.database_url)
     return Pipeline(
         jev=jev,
         jev_fallback=fallback,
         llm=OpenAIClient.from_settings(settings),
-        audit=AuditLog(make_engine(settings.database_url)),
+        audit=AuditLog(engine),
+        queue=ReviewQueue(engine),
         thresholds=Thresholds.load(settings.thresholds_path),
         tools=default_registry(),
+        tool_policy=ToolPolicy.load(settings.tools_policy_path),
     )

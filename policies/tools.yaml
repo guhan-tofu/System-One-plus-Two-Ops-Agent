@@ -1,0 +1,13 @@
+# Tool risk levels and approval rules. Deterministic: these always beat Jev.
+#   read_only   -> runs without a guard
+#   write       -> runs only if every rule below passes AND Jev's guard is confident
+#   destructive -> never runs without human approval
+tools:
+  lookup_customer:
+    risk: read_only
+  issue_refund:
+    risk: write
+    max_auto_amount: 100      # above this -> human approval, regardless of Jev
+    auto_currency: GBP        # any other currency -> human approval
+  close_account:
+    risk: destructive
