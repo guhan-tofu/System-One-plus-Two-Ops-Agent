@@ -45,6 +45,10 @@ def decide_triage(result: JevResult, policy: TriagePolicy) -> TriageDecision:
             f"triage.category confidence {category.confidence:.3f} "
             f"< {policy.category_min_confidence}"
         )
+    if path.confidence < policy.path_min_confidence:
+        reasons.append(
+            f"triage.path confidence {path.confidence:.3f} < {policy.path_min_confidence}"
+        )
     if path.choice == "human":
         reasons.append("triage.path is human")
     if abusive >= policy.abusive_escalate_at:

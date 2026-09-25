@@ -128,6 +128,7 @@ async def test_generate_path_skips_enrich(llm: OpenAIClient, audit: AuditLog) ->
     ("triage_kw", "reason"),
     [
         ({"category_confidence": 0.5}, "category confidence"),
+        ({"path": "lookup", "path_confidence": 0.05}, "path confidence"),
         ({"path": "human"}, "path is human"),
         ({"abusive": 0.95}, "is_abusive"),
     ],

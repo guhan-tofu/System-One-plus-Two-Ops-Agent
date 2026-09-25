@@ -258,6 +258,7 @@ VERIFY = {
 | Decision | Auto-proceed when | Otherwise |
 |---|---|---|
 | triage.category | confidence ≥ 0.75 | human queue |
+| triage.path | confidence ≥ 0.6 | human queue |
 | triage.path == human | always | human queue |
 | is_abusive | noul ≥ 0.6 → escalate | continue |
 | route_model | confidence ≥ 0.6 | default to `strong` |

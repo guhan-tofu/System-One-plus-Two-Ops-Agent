@@ -11,7 +11,9 @@ from sentinel.agent.triage import decide_triage
 from sentinel.policy.engine import RouteModelPolicy, Thresholds, TriagePolicy
 from tests.fixtures.pipeline import jev_result, route_answers, triage_answers
 
-TRIAGE_POLICY = TriagePolicy(category_min_confidence=0.75, abusive_escalate_at=0.6)
+TRIAGE_POLICY = TriagePolicy(
+    category_min_confidence=0.75, path_min_confidence=0.6, abusive_escalate_at=0.6
+)
 ROUTE_POLICY = RouteModelPolicy(min_confidence=0.6, default_tier="strong")
 REPO_THRESHOLDS = Path(__file__).parents[2] / "policies" / "thresholds.yaml"
 
@@ -29,6 +31,16 @@ def test_category_confidence_threshold(confidence: float, escalate: bool) -> Non
     assert d.escalate is escalate
 
 
+@pytest.mark.parametrize(("confidence", "escalate"), [(0.6, False), (0.599, True)])
+def test_path_confidence_threshold(confidence: float, escalate: bool) -> None:
+    d = decide_triage(
+        jev_result(triage_answers(path="lookup", path_confidence=confidence)), TRIAGE_POLICY
+    )
+    assert d.escalate is escalate
+    if escalate:
+        assert d.escalate_reasons == ["triage.path confidence 0.599 < 0.6"]
+
+
 @pytest.mark.parametrize(("path", "escalate"), [("lookup", False), ("human", True)])
 def test_human_path_always_escalates(path: str, escalate: bool) -> None:
     d = decide_triage(jev_result(triage_answers(path=path, path_confidence=0.99)), TRIAGE_POLICY)
@@ -43,10 +55,12 @@ def test_abusive_threshold(abusive: float, escalate: bool) -> None:
 
 def test_all_reasons_reported() -> None:
     d = decide_triage(
-        jev_result(triage_answers(category_confidence=0.5, path="human", abusive=0.9)),
+        jev_result(
+            triage_answers(category_confidence=0.5, path="human", path_confidence=0.1, abusive=0.9)
+        ),
         TRIAGE_POLICY,
     )
-    assert len(d.escalate_reasons) == 3
+    assert len(d.escalate_reasons) == 4
 
 
 @pytest.mark.parametrize(
@@ -68,6 +82,7 @@ def test_route_model(suggested: str, confidence: float, tier: str, overridden: b
 def test_repo_thresholds_match_plan() -> None:
     t = Thresholds.load(REPO_THRESHOLDS)
     assert t.triage.category_min_confidence == 0.75
+    assert t.triage.path_min_confidence == 0.6
     assert t.triage.abusive_escalate_at == 0.6
     assert t.route_model.min_confidence == 0.6
     assert t.route_model.default_tier == "strong"

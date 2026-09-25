@@ -19,6 +19,7 @@ class _Policy(BaseModel):
 
 class TriagePolicy(_Policy):
     category_min_confidence: float = Field(ge=0, le=1)
+    path_min_confidence: float = Field(ge=0, le=1)
     abusive_escalate_at: float = Field(ge=0, le=1)
 
 
