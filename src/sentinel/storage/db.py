@@ -54,6 +54,28 @@ class ReviewItem(Base):
     note: Mapped[str | None] = mapped_column(String(1000))
 
 
+class ItemRow(Base):
+    """A work item submitted to the service and its latest outcome."""
+
+    __tablename__ = "items"
+
+    id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    status: Mapped[str] = mapped_column(String(32), index=True)
+    work_item: Mapped[dict[str, Any]] = mapped_column(JSON)
+    """As received (unredacted): stays in our database, never sent to a model."""
+    outcome: Mapped[dict[str, Any] | None] = mapped_column(JSON)
+    review_id: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(String(300))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), default=lambda: datetime.now(UTC)
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        default=lambda: datetime.now(UTC),
+        onupdate=lambda: datetime.now(UTC),
+    )
+
+
 def make_engine(url: str) -> Engine:
     engine = create_engine(url)
     Base.metadata.create_all(engine)

@@ -20,6 +20,7 @@ StageName = Literal[
     "guard",
     "execute",
     "verify",
+    "review",
     "decide",
 ]
 StageStatus = Literal["ok", "escalate", "error"]

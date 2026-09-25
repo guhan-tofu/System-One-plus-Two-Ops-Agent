@@ -257,6 +257,39 @@ class Pipeline:
         )
         return run.ready_to_send()
 
+    async def resume_approved(
+        self, item: WorkItem, review_id: int, payload: dict[str, Any], *, approver: str
+    ) -> Outcome:
+        """A human approved the held tool calls: run them, then verify the draft.
+
+        Approval lifts "needs approval", never "block": the deterministic policy is
+        re-checked and a blocked call escalates again without running anything.
+        """
+        run = _Run(item, self._audit, self._queue)
+        run.draft = payload.get("draft")
+        run.calls = [ProposedCall.model_validate(c) for c in payload.get("tool_calls", [])]
+        run.stage("review", "ok", review_id=review_id, decision="approved", by=approver)
+
+        has_customer = item.customer_id is not None
+        verdicts = [
+            self._tool_policy.check(c.tool, c.args, has_customer=has_customer) for c in run.calls
+        ]
+        blocked = [r for v in verdicts if v.action == "block" for r in v.reasons]
+        if blocked:
+            return run.escalate(blocked)
+
+        state = build_state(item)
+        if item.customer_id is not None:
+            enriched = await self._enrich(run, item, state)
+            if enriched is None:
+                return run.escalate([f"enrich: {ENRICH_TOOL} failed"])
+            state = enriched
+        results = await self._execute(run, item)
+        reasons = await self._verify(run, state, results)
+        if reasons:
+            return run.escalate(reasons, tool_results=[r.model_dump() for r in results])
+        return run.ready_to_send()
+
     async def _ask(
         self, questions: Mapping[str, Question], state: dict[str, Any]
     ) -> tuple[JevResult, str | None]:

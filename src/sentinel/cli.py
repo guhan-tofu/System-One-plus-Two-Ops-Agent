@@ -295,3 +295,23 @@ async def _eval(
                 await jev.aclose()
         scores.append(score_run(run, policy))
     return scores
+
+
+@app.command()
+def serve(
+    host: Annotated[str, typer.Option()] = "127.0.0.1",
+    port: Annotated[int, typer.Option()] = 8000,
+) -> None:
+    """Run the HTTP API (requires SENTINEL_API_TOKEN)."""
+    import uvicorn
+
+    from sentinel.api.app import create_app
+
+    settings = get_settings()
+    configure_logging(settings.log_level)
+    try:
+        api = create_app(settings)
+    except RuntimeError as exc:
+        typer.secho(str(exc), fg=typer.colors.RED, err=True)
+        raise typer.Exit(1) from None
+    uvicorn.run(api, host=host, port=port, log_level=settings.log_level.lower())

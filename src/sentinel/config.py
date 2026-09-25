@@ -51,6 +51,9 @@ class Settings(BaseSettings):
     tools_policy_path: Path = Path("policies/tools.yaml")
 
     database_url: str = "sqlite:///./sentinel.db"
+
+    sentinel_api_token: SecretStr = SecretStr("")
+    """Bearer token for the HTTP API (SENTINEL_API_TOKEN). Required to serve."""
     log_level: LogLevel = "INFO"
 
 

@@ -42,6 +42,7 @@ def _isolated_settings(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         "THRESHOLDS_PATH",
         "TOOLS_POLICY_PATH",
         "DATABASE_URL",
+        "SENTINEL_API_TOKEN",
         "LOG_LEVEL",
     ):
         monkeypatch.delenv(var, raising=False)
