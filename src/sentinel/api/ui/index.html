@@ -1,0 +1,472 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sentinel demo</title>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1d2330; --muted: #5d6677; --line: #e1e5ec;
+    --jev: #3d63d4; --jev-bg: #eaf0fd; --llm: #c77a1c; --llm-bg: #fdf2e4;
+    --code: #3b8c4a; --code-bg: #eaf6ec; --human: #c2424a; --human-bg: #fcebec;
+    --ok: #2f8a44; --warn: #b7791f; --bad: #c2424a; --accent: #3d63d4;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #12151b; --card: #1b2029; --text: #e6e9ef; --muted: #9aa3b2; --line: #2c3340;
+      --jev-bg: #1d2742; --llm-bg: #36291a; --code-bg: #1b2e20; --human-bg: #3a1f22;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 15px/1.5 system-ui, -apple-system, "Segoe UI", sans-serif;
+         background: var(--bg); color: var(--text); }
+  header { padding: 16px 24px; border-bottom: 1px solid var(--line); background: var(--card);
+           display: flex; gap: 16px; align-items: center; flex-wrap: wrap; }
+  header h1 { font-size: 18px; margin: 0; }
+  header p { margin: 0; color: var(--muted); font-size: 13px; flex: 1 1 300px; }
+  .token { display: flex; gap: 8px; align-items: center; font-size: 13px; }
+  .token input { width: 220px; }
+  main { display: grid; grid-template-columns: minmax(280px, 380px) 1fr; gap: 20px;
+         padding: 20px 24px; max-width: 1300px; margin: 0 auto; }
+  @media (max-width: 860px) { main { grid-template-columns: 1fr; } }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 10px;
+          padding: 16px; }
+  h2 { font-size: 15px; margin: 0 0 10px; }
+  .examples { display: flex; flex-direction: column; gap: 8px; margin-bottom: 16px; }
+  .example { text-align: left; border: 1px solid var(--line); background: var(--card);
+             color: var(--text); border-radius: 8px; padding: 8px 10px; cursor: pointer;
+             font: inherit; }
+  .example:hover, .example.active { border-color: var(--accent); }
+  .example small { display: block; color: var(--muted); }
+  label { display: block; font-size: 12px; color: var(--muted); margin: 10px 0 4px; }
+  input, textarea, select { width: 100%; font: inherit; color: var(--text); background: var(--bg);
+         border: 1px solid var(--line); border-radius: 6px; padding: 7px 9px; }
+  textarea { min-height: 120px; resize: vertical; }
+  .row { display: flex; gap: 10px; } .row > div { flex: 1; }
+  button.primary, button.secondary { font: inherit; border-radius: 6px; padding: 8px 16px;
+         cursor: pointer; border: 1px solid var(--accent); }
+  button.primary { background: var(--accent); color: #fff; }
+  button.secondary { background: transparent; color: var(--accent); }
+  button:disabled { opacity: .5; cursor: default; }
+  .expect { margin-top: 12px; padding: 10px; border-radius: 8px; background: var(--jev-bg);
+            font-size: 13px; }
+  .legend { display: flex; gap: 12px; flex-wrap: wrap; font-size: 12px; color: var(--muted);
+            margin-bottom: 12px; }
+  .legend span::before { content: ""; display: inline-block; width: 10px; height: 10px;
+            border-radius: 3px; margin-right: 5px; vertical-align: -1px; background: var(--c); }
+  .timeline { list-style: none; margin: 0; padding: 0; }
+  .step { display: grid; grid-template-columns: 28px 1fr; gap: 12px; opacity: 0;
+          transform: translateY(6px); transition: opacity .3s, transform .3s; }
+  .step.shown { opacity: 1; transform: none; }
+  .dot { width: 28px; height: 28px; border-radius: 50%; display: grid; place-items: center;
+         color: #fff; font-size: 13px; font-weight: 600; position: relative; }
+  .step:not(:last-child) .dot::after { content: ""; position: absolute; top: 30px; left: 13px;
+         width: 2px; height: calc(100% + 8px); background: var(--line); }
+  .body { padding-bottom: 18px; min-width: 0; }
+  .who { font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .04em;
+         padding: 1px 7px; border-radius: 10px; }
+  .title { font-weight: 600; margin: 2px 0; }
+  .meta { color: var(--muted); font-size: 12px; }
+  .lines { margin: 4px 0 0; padding: 0; list-style: none; }
+  .lines li { margin: 2px 0; overflow-wrap: anywhere; }
+  .bar { display: inline-block; width: 90px; height: 7px; background: var(--line);
+         border-radius: 4px; vertical-align: middle; margin: 0 6px; overflow: hidden; }
+  .bar > i { display: block; height: 100%; background: var(--accent); }
+  .status-ok { color: var(--ok); } .status-escalate { color: var(--warn); }
+  .status-error { color: var(--bad); }
+  .quote { white-space: pre-wrap; background: var(--bg); border-left: 3px solid var(--line);
+           padding: 8px 10px; border-radius: 4px; margin-top: 6px; font-size: 14px; }
+  code { font-size: 12px; background: var(--bg); padding: 1px 4px; border-radius: 4px; }
+  .outcome { margin-top: 8px; border-radius: 10px; padding: 16px; border: 2px solid; }
+  .outcome h3 { margin: 0 0 6px; font-size: 17px; }
+  .outcome.ready_to_send { border-color: var(--ok); }
+  .outcome.awaiting_approval { border-color: var(--warn); }
+  .outcome.escalated, .outcome.failed, .outcome.rejected { border-color: var(--bad); }
+  .outcome.resolved { border-color: var(--muted); }
+  .actions { display: flex; gap: 8px; margin-top: 12px; align-items: center; flex-wrap: wrap; }
+  .actions input { width: 180px; }
+  .working { display: flex; align-items: center; gap: 10px; color: var(--muted); }
+  .spinner { width: 18px; height: 18px; border: 3px solid var(--line);
+             border-top-color: var(--accent); border-radius: 50%; animation: spin 1s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .error { color: var(--bad); }
+  .empty { color: var(--muted); }
+  hr { border: 0; border-top: 1px dashed var(--line); margin: 18px 0; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Sentinel demo</h1>
+  <p>Pick an example (or write your own), run it, and watch how Sentinel handles it step by
+     step: Jev judges, OpenAI writes, code checks and acts, and a person steps in when needed.</p>
+  <div class="token">
+    <label for="token" style="margin:0">API token</label>
+    <input id="token" type="password" placeholder="SENTINEL_API_TOKEN" autocomplete="off">
+  </div>
+</header>
+
+<main>
+  <section class="card">
+    <h2>1. Choose an example</h2>
+    <div class="examples" id="examples"></div>
+
+    <h2>2. Check or edit the ticket</h2>
+    <div class="row">
+      <div>
+        <label for="source">Channel</label>
+        <select id="source">
+          <option value="ticket">ticket</option><option value="email">email</option>
+          <option value="alert">alert</option>
+        </select>
+      </div>
+      <div>
+        <label for="customer">Customer (demo accounts)</label>
+        <select id="customer">
+          <option value="">none</option>
+          <option value="cus_1001">cus_1001 (Pro, monthly)</option>
+          <option value="cus_1002">cus_1002 (Enterprise, annual)</option>
+        </select>
+      </div>
+    </div>
+    <label for="subject">Subject</label>
+    <input id="subject" maxlength="500">
+    <label for="body">Message</label>
+    <textarea id="body" maxlength="20000"></textarea>
+    <div class="actions">
+      <button class="primary" id="run">Run through Sentinel</button>
+    </div>
+    <div class="expect" id="expect" hidden></div>
+  </section>
+
+  <section class="card">
+    <h2>3. What happened</h2>
+    <div class="legend">
+      <span style="--c: var(--jev)">Jev (quick judgment)</span>
+      <span style="--c: var(--llm)">OpenAI (writing)</span>
+      <span style="--c: var(--code)">Code (rules and actions)</span>
+      <span style="--c: var(--human)">Person</span>
+    </div>
+    <div id="result"><p class="empty">Run an example to see each step here.</p></div>
+  </section>
+</main>
+
+<script>
+"use strict";
+// All untrusted text (tickets, drafts, reasons, model output) is rendered with
+// textContent via el(); nothing from the API is ever parsed as HTML.
+
+const $ = (id) => document.getElementById(id);
+function el(tag, props = {}, ...children) {
+  const node = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (k === "class") node.className = v;
+    else if (k === "style") node.setAttribute("style", v);
+    else if (k.startsWith("on")) node.addEventListener(k.slice(2), v);
+    else node.setAttribute(k, v);
+  }
+  for (const c of children.flat()) {
+    if (c === null || c === undefined || c === false) continue;
+    node.append(c instanceof Node ? c : document.createTextNode(String(c)));
+  }
+  return node;
+}
+const pct = (x) => (x === null || x === undefined) ? "?" : Math.round(x * 100) + "%";
+function bar(x) {
+  const w = Math.max(0, Math.min(1, x || 0)) * 100;
+  return el("span", { class: "bar" }, el("i", { style: `width:${w}%` }));
+}
+const money = (x) => (x === null || x === undefined) ? null : "$" + Number(x).toFixed(5);
+
+// ---- token ---------------------------------------------------------------------
+const tokenInput = $("token");
+try { tokenInput.value = sessionStorage.getItem("sentinel-token") || ""; } catch (_) {}
+tokenInput.addEventListener("change", () => {
+  try { sessionStorage.setItem("sentinel-token", tokenInput.value); } catch (_) {}
+});
+
+async function api(method, path, body) {
+  const res = await fetch(path, {
+    method,
+    headers: { "Authorization": "Bearer " + tokenInput.value.trim(),
+               "Content-Type": "application/json" },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  if (res.status === 401) throw new Error("The API token is missing or wrong.");
+  if (res.status === 429) throw new Error("Too many items right now; wait a minute and retry.");
+  if (!res.ok) {
+    let detail = res.statusText;
+    try { const j = await res.json(); detail = JSON.stringify(j.detail ?? j); } catch (_) {}
+    throw new Error(`HTTP ${res.status}: ${detail}`);
+  }
+  return res.json();
+}
+
+// ---- examples ------------------------------------------------------------------
+let examples = [];
+async function loadExamples() {
+  examples = await (await fetch("/ui/examples")).json();
+  const box = $("examples");
+  examples.forEach((ex, i) => {
+    box.append(el("button", { class: "example", onclick: () => pick(i) },
+      ex.title, el("small", {}, ex.item.customer_id ? `customer ${ex.item.customer_id}` : "no customer")));
+  });
+  pick(0);
+}
+function pick(i) {
+  const ex = examples[i];
+  document.querySelectorAll(".example").forEach((b, j) => b.classList.toggle("active", i === j));
+  $("source").value = ex.item.source;
+  $("customer").value = ex.item.customer_id || "";
+  $("subject").value = ex.item.subject || "";
+  $("body").value = ex.item.body;
+  const box = $("expect");
+  box.replaceChildren(el("strong", {}, "What to look for: "), ex.expect);
+  box.hidden = false;
+}
+
+// ---- describing each stage -----------------------------------------------------
+const ACTORS = {
+  jev: { label: "Jev", color: "var(--jev)", bg: "var(--jev-bg)" },
+  fallback: { label: "Jev stand-in (OpenAI)", color: "var(--jev)", bg: "var(--jev-bg)" },
+  llm: { label: "OpenAI", color: "var(--llm)", bg: "var(--llm-bg)" },
+  code: { label: "Code", color: "var(--code)", bg: "var(--code-bg)" },
+  human: { label: "Person", color: "var(--human)", bg: "var(--human-bg)" },
+};
+const jevActor = (r) => r.provider === "llm_fallback" ? "fallback" : "jev";
+
+function describe(r) {
+  const d = r.detail || {};
+  const lines = [];
+  let actor = "code", title = r.stage;
+  switch (r.stage) {
+    case "ingest":
+      title = "Ticket received";
+      lines.push(`Channel: ${d.source}. ${d.has_customer_id ? "Linked to a customer account." : "No customer account linked."}`);
+      break;
+    case "build_state":
+      title = "Personal data removed";
+      lines.push("Emails, phone numbers and card numbers are replaced before any AI sees the ticket. The customer ID stays in code.");
+      break;
+    case "triage": {
+      actor = jevActor(r); title = "Triage: who handles it, how urgent, what's needed";
+      const t = d.decision;
+      if (t) {
+        lines.push(el("span", {}, "Team: ", el("b", {}, t.category), bar(t.category_confidence), `${pct(t.category_confidence)} confident`));
+        lines.push(el("span", {}, "Urgency: ", el("b", {}, t.urgency_label)));
+        const pathText = { lookup: "look up account data", generate: "answer directly", human: "needs a person" }[t.path] || t.path;
+        lines.push(el("span", {}, "Next step: ", el("b", {}, pathText), bar(t.path_confidence), `${pct(t.path_confidence)} confident`));
+        lines.push(el("span", {}, "Abusive: ", el("b", {}, t.abusive >= 0.5 ? "yes" : "no"), bar(t.abusive), `${pct(t.abusive)} likely`));
+        (t.escalate_reasons || []).forEach((x) => lines.push(el("span", { class: "status-escalate" }, "→ Goes to a person: ", friendly(x))));
+      }
+      break;
+    }
+    case "enrich":
+      title = "Account lookup";
+      lines.push(d.ran ? (d.found ? "Found the account: plan, status, recent charges and open incidents were added (no names or contact details)." : "No matching account was found.")
+                       : `Skipped (${d.reason || "not needed"}).`);
+      break;
+    case "route_model": {
+      actor = jevActor(r); title = "Pick the writing model";
+      const x = d.decision;
+      if (x) {
+        lines.push(el("span", {}, "Chose the ", el("b", {}, x.tier), " model", bar(x.confidence), `${pct(x.confidence)} confident`));
+        if (x.overridden) lines.push(`Jev wasn't sure (it suggested "${x.suggested}"), so the rules default to the strong model.`);
+      }
+      break;
+    }
+    case "generate":
+      actor = "llm"; title = "Draft the reply and propose actions";
+      if (d.draft !== undefined) {
+        lines.push(el("div", { class: "quote" }, d.draft || "(empty)"));
+        const calls = d.tool_calls || [];
+        lines.push(calls.length ? el("span", {}, "Proposed actions: ", calls.map((c) => el("code", {}, `${c.tool} ${JSON.stringify(c.args)}`)))
+                                : "No actions proposed.");
+        lines.push("These are only proposals; code decides what actually runs.");
+      }
+      break;
+    case "guard": {
+      const g = d.decision;
+      actor = r.provider ? jevActor(r) : "code";
+      title = g ? `Safety check: ${g.call.tool}` : "Safety check";
+      if (g) {
+        const pol = { allow: "allowed (read-only)", guard: "allowed, if Jev agrees it's safe", approval: "needs a person's approval", block: "blocked" }[g.policy.action];
+        lines.push(el("span", {}, "1. Policy rules: ", el("b", {}, pol)));
+        if (g.safe !== null && g.safe !== undefined) lines.push(el("span", {}, "2. Jev: safe to run?", bar(g.safe), `${pct(g.safe)} (needs 90%)`));
+        const verdict = { run: "Will run", approval: "Held for a person", block: "Blocked" }[g.action];
+        lines.push(el("span", { class: g.action === "run" ? "status-ok" : "status-escalate" }, "→ ", verdict));
+        (g.reasons || []).forEach((x) => lines.push(el("span", { class: "meta" }, friendly(x))));
+      } else if (d.error) lines.push(el("span", { class: "status-error" }, d.error));
+      break;
+    }
+    case "execute":
+      title = `Run the action: ${d.tool}`;
+      lines.push(el("code", {}, JSON.stringify(d.args)));
+      lines.push(d.ok ? el("span", { class: "status-ok" }, "Succeeded ", el("code", {}, JSON.stringify(d.data)))
+                      : el("span", { class: "status-error" }, `Failed: ${d.error}`));
+      break;
+    case "verify":
+      title = "Check the reply against what actually happened";
+      if (d.deterministic) {
+        lines.push(el("span", { class: "status-escalate" }, "An action failed, so the reply can't be sent (rule, Jev not needed)."));
+      } else if (d.decision) {
+        actor = jevActor(r);
+        const v = d.decision;
+        lines.push(el("span", {}, "Every claim supported?", bar(v.claim_supported), `${pct(v.claim_supported)} (needs 85%)`));
+        if (v.task_status) lines.push(`Task status: ${v.task_status}`);
+        (v.escalate_reasons || []).forEach((x) => lines.push(el("span", { class: "status-escalate" }, "→ ", friendly(x))));
+      } else if (d.error) lines.push(el("span", { class: "status-error" }, d.error));
+      break;
+    case "review":
+      actor = "human"; title = "Human decision";
+      lines.push(`${d.decision === "approved" ? "Approved" : d.decision || d.outcome} by ${d.by}.`);
+      break;
+    case "decide": {
+      title = "Final decision";
+      const cost = money(d.total_cost_usd);
+      lines.push(`Outcome: ${d.outcome}${cost ? ` · model cost ${cost}${d.cost_complete ? "" : " (partly unknown)"}` : ""}`);
+      break;
+    }
+  }
+  if (d.primary_error) {
+    lines.unshift(el("span", { class: "status-escalate" },
+      "The official Jev was unavailable, so the OpenAI stand-in answered instead. ",
+      el("span", { class: "meta" }, `(${d.primary_error})`)));
+  }
+  if (r.status === "error" && d.error && !["guard", "verify"].includes(r.stage)) {
+    lines.push(el("span", { class: "status-error" }, d.error));
+  }
+  return { actor, title, lines };
+}
+
+function friendly(reason) {
+  const rules = [
+    [/^triage\.path is human/, "Jev judged that a person should handle this."],
+    [/^triage\.is_abusive/, "The message looks abusive or threatening."],
+    [/^triage\.category confidence/, "Jev wasn't sure which team this belongs to."],
+    [/^triage\.path confidence/, "Jev wasn't sure what resolving this needs."],
+    [/destructive tools always need approval/, "Destructive actions always need a person."],
+    [/amount .* > auto limit/, "The amount is above the automatic limit."],
+    [/currency/, "The currency isn't allowed for automatic actions."],
+    [/safe_to_run/, "Jev wasn't confident this action is safe."],
+    [/^verify\.claim_supported/, "Jev couldn't confirm every claim in the reply."],
+    [/^verify\.task_status/, "Jev thinks the task isn't complete."],
+    [/^execute: .* failed/, "An action failed."],
+    [/Jev unavailable/, "Jev was unavailable, so a person takes over."],
+    [/draft failed/, "Drafting failed, so a person takes over."],
+  ];
+  const hit = rules.find(([re]) => re.test(reason));
+  return hit ? `${hit[1]} (${reason})` : reason;
+}
+
+// ---- rendering -----------------------------------------------------------------
+function renderSteps(container, trace, meta) {
+  const list = el("ol", { class: "timeline" });
+  container.append(list);
+  trace.forEach((r, i) => {
+    const { actor, title, lines } = describe(r);
+    const a = ACTORS[actor];
+    const statusClass = { ok: "status-ok", escalate: "status-escalate", error: "status-error" }[r.status];
+    const info = [r.model && `${r.model}${r.model_verified === false ? " (unversioned)" : ""}`,
+                  r.latency_ms != null && `${Math.round(r.latency_ms)} ms`].filter(Boolean).join(" · ");
+    const step = el("li", { class: "step" },
+      el("div", { class: "dot", style: `background:${a.color}` }, String(i + 1)),
+      el("div", { class: "body" },
+        el("span", { class: "who", style: `background:${a.bg};color:${a.color}` }, a.label),
+        el("span", { class: `meta ${statusClass}` }, "  ", r.status),
+        el("div", { class: "title" }, title),
+        info && el("div", { class: "meta" }, info),
+        el("ul", { class: "lines" }, lines.map((x) => el("li", {}, x)))));
+    list.append(step);
+    setTimeout(() => step.classList.add("shown"), meta.animate ? 350 * i : 0);
+  });
+  return meta.animate ? 350 * trace.length : 0;
+}
+
+const OUTCOMES = {
+  ready_to_send: ["Ready to send", "Every claim in the reply was checked against what actually happened."],
+  awaiting_approval: ["Waiting for your approval", "Nothing has run yet. A person must approve or reject the proposed actions."],
+  escalated: ["Handed to a person", "Sentinel wasn't confident enough to finish this on its own."],
+  failed: ["Something went wrong", "The item could not be processed."],
+  rejected: ["Rejected", "The proposed actions were rejected; nothing was done."],
+  resolved: ["Resolved by a person", "A person has taken care of this item."],
+};
+
+function renderOutcome(container, item) {
+  const o = item.outcome || {};
+  const [head, sub] = OUTCOMES[item.status] || [item.status, ""];
+  const card = el("div", { class: `outcome ${item.status}` }, el("h3", {}, head), el("div", { class: "meta" }, sub));
+  (o.reasons || []).forEach((x) => card.append(el("div", { class: "status-escalate" }, "• ", friendly(x))));
+  if (item.error) card.append(el("div", { class: "status-error" }, item.error));
+  if ((o.tool_calls || []).length) {
+    card.append(el("div", {}, item.status === "ready_to_send" ? "Actions taken: " : "Proposed actions: ",
+      o.tool_calls.map((c) => el("code", {}, `${c.tool} ${JSON.stringify(c.args)}`))));
+  }
+  if (o.draft) card.append(el("div", { class: "quote" }, o.draft));
+  if (item.status === "awaiting_approval" && item.review_id) {
+    const who = el("input", { value: "demo-reviewer", "aria-label": "Your name" });
+    const approve = el("button", { class: "primary" }, "Approve and run");
+    const reject = el("button", { class: "secondary" }, "Reject");
+    const decide = async (kind) => {
+      approve.disabled = reject.disabled = true;
+      const note = el("div", { class: "working" }, el("div", { class: "spinner" }), kind === "approve" ? "Running the approved actions…" : "Rejecting…");
+      card.append(note);
+      try {
+        const next = await api("POST", `/review/${item.review_id}/${kind}`, { by: who.value || "demo-reviewer" });
+        note.remove();
+        const after = el("div");
+        container.append(el("hr"), el("h2", {}, kind === "approve" ? "After your approval" : "After rejection"), after);
+        show(after, next, true);
+      } catch (e) { note.replaceChildren(el("span", { class: "error" }, e.message)); }
+    };
+    approve.addEventListener("click", () => decide("approve"));
+    reject.addEventListener("click", () => decide("reject"));
+    card.append(el("div", { class: "actions" }, el("label", { style: "margin:0" }, "Your name"), who, approve, reject));
+  }
+  container.append(card);
+}
+
+function show(container, item, animate) {
+  const trace = (item.outcome && item.outcome.trace) || [];
+  const delay = trace.length ? renderSteps(container, trace, { animate }) : 0;
+  setTimeout(() => renderOutcome(container, item), delay);
+}
+
+// ---- running an item -----------------------------------------------------------
+async function run() {
+  const result = $("result");
+  const button = $("run");
+  const body = $("body").value.trim();
+  if (!body) { result.replaceChildren(el("p", { class: "error" }, "Write a message first.")); return; }
+  const item = {
+    id: `ui-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
+    source: $("source").value,
+    subject: $("subject").value.trim(),
+    body,
+  };
+  if ($("customer").value) item.customer_id = $("customer").value;
+
+  button.disabled = true;
+  const status = el("div", { class: "working" }, el("div", { class: "spinner" }), "Sending the ticket…");
+  result.replaceChildren(status);
+  try {
+    await api("POST", "/items", item);
+    status.lastChild.textContent = "Jev, OpenAI and code are working on it (usually a few seconds)…";
+    const started = Date.now();
+    let current;
+    do {
+      await new Promise((r) => setTimeout(r, 1000));
+      current = await api("GET", `/items/${encodeURIComponent(item.id)}`);
+    } while (["queued", "processing"].includes(current.status) && Date.now() - started < 180000);
+    result.replaceChildren();
+    show(result, current, true);
+  } catch (e) {
+    result.replaceChildren(el("p", { class: "error" }, e.message));
+  } finally {
+    button.disabled = false;
+  }
+}
+$("run").addEventListener("click", run);
+loadExamples().catch((e) => $("examples").append(el("p", { class: "error" }, "Could not load examples: " + e.message)));
+</script>
+</body>
+</html>

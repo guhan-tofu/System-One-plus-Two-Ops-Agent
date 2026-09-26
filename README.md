@@ -122,6 +122,25 @@ every setting with a comment.
 
 ## Using it
 
+### Try it in your browser
+
+```sh
+uv run sentinel serve        # then open http://127.0.0.1:8000/ui
+```
+
+Paste your `SENTINEL_API_TOKEN` into the page, pick one of the suggested examples
+(small refund, large refund, closing an account, an outage, an abusive message, a
+prompt-injection attempt, a how-to question) or write your own, and press **Run**.
+The page shows each step as it happened: who acted (Jev, OpenAI, code or a person),
+what they decided and how confident they were, which actions were proposed, checked
+and run, and the end result. When actions are held for approval you can
+**Approve** or **Reject** them right there and watch what happens next.
+
+The demo accounts (`cus_1001`, `cus_1002`) and their charges are mock data that reset
+when the server restarts. Set `JEV_ON_FAILURE=llm_fallback` if you want the demo to
+keep working when the Jev gateway is busy. The page then marks those steps as
+"Jev stand-in (OpenAI)".
+
 ### Command line
 
 ```sh
@@ -148,6 +167,7 @@ The server refuses to start without a token.
 | `POST` | `/review/{id}/approve` | `{"by": "...", "note": "..."}`. For held tool calls: policy is re-checked, the calls run, then the draft is verified. For escalations: marks the item resolved. |
 | `POST` | `/review/{id}/reject` | Nothing runs; the item is marked rejected. |
 | `GET` | `/healthz` | Liveness check. |
+| `GET` | `/ui`, `/ui/examples` | Demo web page and its example tickets (static, no token; the page's own calls use the token). |
 
 ```sh
 curl -X POST localhost:8000/items \
@@ -257,7 +277,7 @@ src/sentinel/
   tools/     tool registry and mock built-in tools (lookup_customer, issue_refund, close_account)
   policy/    YAML policy engine (thresholds, tool rules)
   storage/   SQLAlchemy: audit log, review queue, items
-  api/       FastAPI app and service layer
+  api/       FastAPI app, service layer and the demo UI (api/ui/)
   evals/     dataset loader, metrics, runner, report
   cli.py     `sentinel` command
 policies/    thresholds.yaml, tools.yaml, model_tiers.yaml
