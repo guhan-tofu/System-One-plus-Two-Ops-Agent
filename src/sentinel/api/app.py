@@ -7,12 +7,15 @@ GET  /review/{id}        one review entry with its payload
 POST /review/{id}/approve  approve: held tool calls run (policy re-checked), then verify
 POST /review/{id}/reject   reject: nothing runs
 GET  /healthz            liveness (no auth)
+GET  /ui                 demo web UI (static page, no auth; its API calls need the token)
+GET  /ui/examples        suggested example tickets for the UI (fake data, no auth)
 
 Every endpoint except /healthz requires `Authorization: Bearer <SENTINEL_API_TOKEN>`.
 """
 
 from __future__ import annotations
 
+import json
 import math
 import secrets
 import time
@@ -20,9 +23,11 @@ from collections import deque
 from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from datetime import datetime
+from importlib.resources import files
 from typing import Annotated, Any, Literal
 
 from fastapi import BackgroundTasks, Depends, FastAPI, HTTPException, Query, Request, status
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from pydantic import BaseModel, Field
 
@@ -177,6 +182,22 @@ def create_app(settings: Settings | None = None, *, service: Service | None = No
     app = FastAPI(title="Sentinel", lifespan=lifespan)
     app.state.api_token = token
     app.state.item_limiter = SlidingWindowLimiter(settings.api_max_items_per_minute)
+
+    ui_files = files("sentinel.api") / "ui"
+    ui_page = (ui_files / "index.html").read_text(encoding="utf-8")
+    ui_examples = json.loads((ui_files / "examples.json").read_text(encoding="utf-8"))
+
+    @app.get("/", include_in_schema=False)
+    async def root() -> RedirectResponse:
+        return RedirectResponse("/ui")
+
+    @app.get("/ui", include_in_schema=False)
+    async def ui() -> HTMLResponse:
+        return HTMLResponse(ui_page)
+
+    @app.get("/ui/examples")
+    async def examples() -> list[dict[str, Any]]:
+        return list(ui_examples)
 
     @app.get("/healthz")
     async def healthz() -> dict[str, str]:

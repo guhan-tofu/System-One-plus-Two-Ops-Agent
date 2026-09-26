@@ -79,7 +79,6 @@ class JevRequest(_Frozen):
     questions: dict[str, Question] = Field(min_length=1)
 
 
-
 # --- answers -----------------------------------------------------------------
 
 

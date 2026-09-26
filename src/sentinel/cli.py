@@ -314,4 +314,5 @@ def serve(
     except RuntimeError as exc:
         typer.secho(str(exc), fg=typer.colors.RED, err=True)
         raise typer.Exit(1) from None
+    typer.echo(f"Sentinel API on http://{host}:{port}  ·  demo UI: http://{host}:{port}/ui")
     uvicorn.run(api, host=host, port=port, log_level=settings.log_level.lower())
