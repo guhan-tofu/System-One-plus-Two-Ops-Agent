@@ -20,6 +20,39 @@ It combines two kinds of model, and keeps code in charge of both:
 Every item goes through the same pipeline. Each stage is written to an audit log as
 it happens, together with the model ID that made the decision.
 
+```mermaid
+flowchart TD
+    A([New ticket, alert or email]) --> B[Remove personal data<br/>emails, phones, card numbers]
+    B --> C{Jev: triage<br/>team, urgency, path, abusive?}
+    C -->|unsure, abusive or<br/>needs a person| H
+    C -->|needs account data| D[Look up the account<br/>read-only]
+    C -->|can answer directly| E
+    D --> E{Jev: pick model<br/>fast or strong}
+    E --> F[OpenAI: draft the reply<br/>and propose any actions]
+    F --> G{Safety check on each action<br/>1. policy rules<br/>2. Jev: safe to run?}
+    G -->|risky, too large<br/>or destructive| H
+    G -->|safe| X[Code runs the actions<br/>e.g. a refund]
+    X --> V{Jev: does the reply match<br/>what actually happened?}
+    V -->|no, or an action failed| H
+    V -->|yes| R([Ready to send])
+    H([Human review queue<br/>approve or reject])
+    H -.->|approved actions<br/>are re-checked, run and verified| X
+
+    classDef jev fill:#e8f0fe,stroke:#4a6fd8,color:#1a2b5c
+    classDef llm fill:#fdf1e3,stroke:#d48a2a,color:#5c3a0f
+    classDef code fill:#eef7ee,stroke:#4c9a4c,color:#1f4a1f
+    classDef human fill:#fdeaea,stroke:#c94a4a,color:#5c1a1a
+    class C,E,G,V jev
+    class F llm
+    class B,D,X,R code
+    class H human
+```
+
+Blue: **Jev** judgments. Orange: **OpenAI** writing. Green: **code** (it has the final
+say). Red: a **person**.
+
+In pipeline terms the stages are:
+
 ```
 ingest -> build_state -> triage -> [enrich] -> route_model -> generate
        -> guard -> execute -> verify -> decide
