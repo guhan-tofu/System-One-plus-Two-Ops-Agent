@@ -1,10 +1,9 @@
 """Jev's `confidence` as a function of an answer's probabilities.
 
 Reverse-engineered from live Jev responses (2026-09-25; 15 score and 9 choice
-samples, all matching to Jev's 2-decimal rounding) and confirmed against the
-official Jev via Vercel AI Gateway, whose reported confidence matches exactly.
-Used when a provider omits confidence (and by `llm_fallback`) so that thresholds
-mean the same thing whichever provider answered.
+samples, all matching to Jev's 2-decimal rounding). The official TypeSafe API
+reports confidence itself; this is used when a provider omits it (and by
+`llm_fallback`) so that thresholds mean the same thing whichever provider answered.
 """
 
 from __future__ import annotations

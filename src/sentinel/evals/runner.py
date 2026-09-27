@@ -53,8 +53,8 @@ async def run_provider(
 ) -> ProviderRun:
     """Ask TRIAGE for every item (same redacted state as the pipeline builds).
 
-    `max_rate` caps request starts per second: Vercel AI Gateway's free tier
-    answers bursts of ~3 req/s with 503/429 and no Retry-After.
+    `max_rate` caps request starts per second (useful for `vercel`: the AI Gateway
+    free tier answers bursts of ~3 req/s with 503/429 and no Retry-After).
     """
     semaphore = asyncio.Semaphore(concurrency)
     pace = asyncio.Lock()

@@ -48,7 +48,10 @@ def version() -> None:
 
 @app.command()
 def probe(
-    model: Annotated[str | None, typer.Option(help="Override JEV_GATEWAY_MODEL.")] = None,
+    model: Annotated[
+        str | None,
+        typer.Option(help="Override JEV_MODEL (JEV_GATEWAY_MODEL for vercel)."),
+    ] = None,
 ) -> None:
     """Make one live Jev call with fake data and print the raw response shape."""
     settings = get_settings()
@@ -232,7 +235,7 @@ def eval_command(
     limit: Annotated[int | None, typer.Option(min=1, help="Only the first N items.")] = None,
     rate: Annotated[
         float | None,
-        typer.Option(min=0.1, help="Max requests/second per provider (gateway free tier)."),
+        typer.Option(min=0.1, help="Max requests/second per provider."),
     ] = None,
 ) -> None:
     """Evaluate Jev providers on a labeled dataset and write a markdown report."""
@@ -242,7 +245,7 @@ def eval_command(
     settings = get_settings()
     configure_logging(settings.log_level)
     items = load_dataset(dataset)[:limit]
-    names = provider or ["vercel", "llm_fallback"]
+    names = provider or ["typesafe", "llm_fallback"]
     scores = asyncio.run(_eval(names, items, concurrency, rate))
 
     now = datetime.now(UTC)

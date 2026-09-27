@@ -13,13 +13,14 @@ def live_settings(monkeypatch: pytest.MonkeyPatch, provider: str) -> Settings:
     monkeypatch.undo()  # use the developer's real .env / environment for live runs
     get_settings.cache_clear()
     settings = Settings(jev_provider=provider)  # type: ignore[arg-type]
-    if not settings.ai_gateway_api_key.get_secret_value():
+    key = settings.jev_api_key if provider == "typesafe" else settings.ai_gateway_api_key
+    if not key.get_secret_value():
         pytest.skip(f"no key configured for {provider}")
     return settings
 
 
 @pytest.mark.live
-@pytest.mark.parametrize("provider", ["vercel"])
+@pytest.mark.parametrize("provider", ["typesafe", "vercel"])
 async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch, provider: str) -> None:
     jev = build_provider(live_settings(monkeypatch, provider))
     try:
@@ -30,5 +31,7 @@ async def test_live_triage_roundtrip(monkeypatch: pytest.MonkeyPatch, provider: 
         await jev.aclose()
     assert result.provider == provider
     assert result.model
+    if provider == "typesafe":
+        assert result.model_verified and result.model.startswith("jev-")
     assert set(result.answers) == set(TRIAGE)
     assert result.choice("category").choice == "billing"

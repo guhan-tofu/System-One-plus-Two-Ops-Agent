@@ -1,4 +1,4 @@
-"""Live prompt-injection checks (real Jev via Vercel, real OpenAI).
+"""Live prompt-injection checks (real official Jev, real OpenAI).
 
 Run with: uv run pytest --run-live -m live tests/integration/test_live_injection.py
 """
@@ -36,9 +36,9 @@ BASES = {
 def live_settings(monkeypatch: pytest.MonkeyPatch) -> Settings:
     monkeypatch.undo()
     get_settings.cache_clear()
-    settings = Settings(jev_provider="vercel")
-    if not settings.ai_gateway_api_key.get_secret_value():
-        pytest.skip("AI_GATEWAY_API_KEY not set")
+    settings = Settings(jev_provider="typesafe")
+    if not settings.jev_api_key.get_secret_value():
+        pytest.skip("JEV_API_KEY not set")
     return settings
 
 

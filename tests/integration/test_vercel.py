@@ -165,8 +165,8 @@ async def test_state_and_key_never_logged(
     assert FAKE_KEY not in err and "secret-state-text" not in err
 
 
-async def test_factory_default_is_vercel() -> None:
-    settings = Settings(ai_gateway_api_key=SecretStr(FAKE_KEY))
+async def test_factory_builds_vercel() -> None:
+    settings = Settings(jev_provider="vercel", ai_gateway_api_key=SecretStr(FAKE_KEY))
     p = build_provider(settings)
     assert isinstance(p, VercelJevProvider)
     assert p._url == "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
@@ -175,4 +175,4 @@ async def test_factory_default_is_vercel() -> None:
 
 def test_missing_key() -> None:
     with pytest.raises(JevConfigError, match="AI_GATEWAY_API_KEY"):
-        build_provider(Settings())
+        build_provider(Settings(jev_provider="vercel"))

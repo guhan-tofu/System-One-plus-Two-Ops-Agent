@@ -1,12 +1,10 @@
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-import httpx
 import pytest
 import respx
 from typer.testing import CliRunner
@@ -26,7 +24,7 @@ from sentinel.jev.models import (
     State,
 )
 from sentinel.policy.engine import Thresholds
-from tests.fixtures.vercel import EVAL_URL, GATEWAY_URL
+from tests.fixtures.typesafe import API_URL, answer_request
 
 ROOT = Path(__file__).parents[2]
 DATASET = ROOT / "evals" / "datasets" / "triage.jsonl"
@@ -148,50 +146,23 @@ async def test_report_renders_side_by_side() -> None:
     assert "## broken" in md and "**Errors** (first 5):" in md
 
 
-def gateway_answer(request: httpx.Request) -> httpx.Response:
-    """Always the first offered option, 0.9 confident (enough to exercise the report)."""
-    questions = json.loads(request.content)["questions"]
-    answers: dict[str, Any] = {}
-    for qid, q in questions.items():
-        if q["type"] == "choice":
-            options = list(q["criteria"])
-            answers[qid] = {
-                "type": "choice",
-                "choice": options[0],
-                "probabilities": {
-                    o: 0.9 if i == 0 else 0.1 / (len(options) - 1) for i, o in enumerate(options)
-                },
-            }
-        elif q["type"] == "score":
-            answers[qid] = {
-                "type": "score",
-                "score": 1.0,
-                "probabilities": {
-                    str(i): 1.0 if i == 1 else 0.0 for i in range(len(q["criteria"]))
-                },
-            }
-        else:
-            answers[qid] = {"type": "boolean", "probability": 0.1}
-    return httpx.Response(200, json={"answers": answers, "warnings": []})
-
-
 @respx.mock
 def test_cli_eval_writes_report(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    monkeypatch.setenv("AI_GATEWAY_API_KEY", "fake-gateway-key")  # pragma: allowlist secret
-    monkeypatch.setenv("AI_GATEWAY_BASE_URL", GATEWAY_URL)
-    respx.post(EVAL_URL).mock(side_effect=gateway_answer)
+    monkeypatch.setenv("JEV_API_KEY", "fake-jev-key")  # pragma: allowlist secret
+    monkeypatch.setenv("JEV_BASE_URL", API_URL)
+    respx.post(API_URL).mock(side_effect=answer_request)
 
     result = CliRunner().invoke(
         app,
-        ["eval", "--provider", "vercel", "--provider", "typesafe", "--limit", "6",
+        ["eval", "--provider", "typesafe", "--provider", "vercel", "--limit", "6",
          "--out", str(tmp_path)],
     )  # fmt: skip
 
     assert result.exit_code == 0, result.output
     [report] = list(tmp_path.glob("*-triage.md"))
     md = report.read_text()
-    assert "| | vercel | typesafe |" in md
-    assert "| Errors | 0/6 | 6/6 |" in md  # typesafe (direct API) is not implemented
-    assert "provider not available" in md
-    assert "fake-gateway-key" not in md
-    assert "vercel: errors 0/6" in result.stdout
+    assert "| | typesafe | vercel |" in md
+    assert "| Errors | 0/6 | 6/6 |" in md  # no AI_GATEWAY_API_KEY configured for vercel
+    assert "provider not available" in md and "AI_GATEWAY_API_KEY is not set" in md
+    assert "fake-jev-key" not in md
+    assert "typesafe: errors 0/6" in result.stdout

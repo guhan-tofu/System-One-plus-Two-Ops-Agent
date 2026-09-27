@@ -23,9 +23,10 @@ Guiding rule: *Jev decides which path, the LLM does the work, code pulls the tri
 - All keys live in `.env` (gitignored). Load with `pydantic-settings`. Never log them,
   never put them in prompts, tests, fixtures, or commit history.
 - `.env.example` is committed with empty values only.
-- Jev provider (default, `JEV_PROVIDER=vercel`): **official TypeSafe Jev
-  (`typesafe-ai/jev`) through Vercel AI Gateway**. The gateway reports which upstream
-  answered (`finalProvider`) and a `generationId`; both are audited. Fallback:
+- Jev provider (default, `JEV_PROVIDER=typesafe`): **the official TypeSafe Jev API**
+  (`JEV_API_KEY`). It returns a versioned model ID (e.g. `jev-1.13.0`), which is
+  audited. Alternatives: `vercel` (the same Jev through Vercel AI Gateway, which
+  reports `finalProvider` and a `generationId` but no versioned model ID) and
   `llm_fallback` (OpenAI emulation). Therefore:
   - Everything goes through a `JevProvider` interface so providers swap with a
     config change.
@@ -34,8 +35,10 @@ Guiding rule: *Jev decides which path, the LLM does the work, code pulls the tri
 
 ```
 # .env.example
-JEV_PROVIDER=vercel           # vercel | typesafe (direct API, later) | llm_fallback
-AI_GATEWAY_API_KEY=           # Vercel AI Gateway key (placeholder if proxy-injected)
+JEV_PROVIDER=typesafe         # typesafe | vercel | llm_fallback
+JEV_API_KEY=                  # official TypeSafe Jev API key
+JEV_MODEL=jev-latest          # alias or pinned version; the returned version is audited
+AI_GATEWAY_API_KEY=           # only for JEV_PROVIDER=vercel
 JEV_GATEWAY_MODEL=typesafe-ai/jev
 OPENAI_API_KEY=
 OPENAI_MODEL_FAST=            # cheap tier, set to a current model name
@@ -112,8 +115,9 @@ sentinel/
 │   ├── jev/
 │   │   ├── provider.py        # JevProvider protocol
 │   │   ├── http.py            # shared HTTP provider base (retries, errors)
-│   │   ├── vercel.py          # official Jev via Vercel AI Gateway (default)
-│   │   ├── typesafe.py        # stub for a direct TypeSafe API (later)
+│   │   ├── typesafe.py        # official TypeSafe Jev API (default)
+│   │   ├── vercel.py          # the same Jev via Vercel AI Gateway
+│   │   ├── checks.py          # answer sanity checks shared by the parsers
 │   │   ├── resilience.py      # rate limit + circuit breaker wrappers
 │   │   ├── confidence.py      # Jev's confidence formulas
 │   │   ├── llm_fallback.py    # emulates Jev via OpenAI structured output
@@ -151,7 +155,18 @@ sentinel/
 
 ## 6. Jev client contract
 
-**Vercel AI Gateway (default, confirmed live 2026-09-25; `jev/vercel.py`):**
+**Official TypeSafe API (default, confirmed live 2026-09-27; `jev/typesafe.py`):**
+`POST {JEV_BASE_URL}` (default `https://api.typesafe.ai/v1/systemone`),
+`Authorization: Bearer <JEV_API_KEY>`; body `{ "model", "state", "questions" }` in our
+own model shapes (`choice` / `score` / `noul`). Response: `{model, answers, usage:
+{input_tokens, output_tokens}}`, with `confidence` on choice and score answers and the
+score `legend`. `model` is the versioned ID (aliases `jev-latest`/`jev-preview`
+resolve to it); it is audited with `model_verified=true`. Errors: `{"detail":
+{"error_type", "message"}}`; 400 for usage errors (e.g. unknown model), 401 bad key,
+422 validation, 429 rate limited and 529 overloaded (both with optional
+`retry-after`). Documented limits: 1,200 requests/min, 250k tokens/s.
+
+**Vercel AI Gateway (alternative, confirmed live 2026-09-25; `jev/vercel.py`):**
 `POST {AI_GATEWAY_BASE_URL}/evaluation-model`, headers `ai-model-id: typesafe-ai/jev`,
 `ai-evaluation-model-specification-version: 4`, `ai-gateway-protocol-version: 0.0.1`,
 `Authorization: Bearer <key>`; body `{ "state", "questions" }` (model in the header).
@@ -180,10 +195,11 @@ Implementation requirements:
   is the mean distance from the middle level under a uniform distribution. Score
   value = expected level index. `llm_fallback` derives confidence the same way so
   thresholds mean the same thing across providers.
-- Always record the model ID in the audit log (plus the gateway's `generationId` and
-  `finalProvider`).
-- Retries: exponential backoff with jitter on 429, 503 and 529 (max 4 attempts);
-  the gateway returns 503 "try again shortly" when throttling. No retry on
+- Always record the model ID in the audit log (for `vercel`, plus the gateway's
+  `generationId` and `finalProvider`).
+- Retries: exponential backoff with jitter on 429 and 529 (max 4 attempts), waiting
+  at least `retry-after` when sent (capped at 30s); `vercel` also retries 503, which
+  the gateway returns ("try again shortly") when throttling. No retry on
   400/401/403/422; validation errors surface the offending field in the exception.
 - Timeouts: 5s connect / 10s read. On final failure → fallback provider or
   human queue (configurable), never silent default answers.
@@ -279,8 +295,8 @@ approval regardless of Jev). Thresholds get tuned from eval data, not by feel.
 *Accept:* `uv run pytest` and `uv run mypy src` pass on empty skeleton.
 
 **Phase 1 — Jev client**
-Models, question builders, HTTP provider (official Jev via Vercel AI Gateway,
-`jev/vercel.py`), retries, strict parsing.
+Models, question builders, HTTP providers (official TypeSafe API, `jev/typesafe.py`;
+Vercel AI Gateway, `jev/vercel.py`), retries, strict parsing.
 `sentinel probe` CLI makes one live call and prints the raw response shape.
 *Accept:* unit tests (respx) for all 3 answer types, 401/422/429/529 paths; live probe
 works; parser locked to confirmed shape.
@@ -304,8 +320,8 @@ human review queue table.
 **Phase 5 — Evals**
 50–200 labeled items in `evals/datasets/`. Metrics: accuracy per question,
 Brier score, calibration table (10 bins), p50/p95 latency, cost per item.
-Compare providers side by side (`vercel`, `llm_fallback`).
-`sentinel eval -p vercel -p llm_fallback [--rate 1]`; code in `src/sentinel/evals/`.
+Compare providers side by side (`typesafe`, `vercel`, `llm_fallback`).
+`sentinel eval -p typesafe -p llm_fallback [-p vercel --rate 1]`; code in `src/sentinel/evals/`.
 *Accept:* `sentinel eval` writes a markdown report to `evals/reports/`.
 
 **Phase 6 — Service**
@@ -328,10 +344,10 @@ provider in the pipeline), `POST /items` rate limit and size caps,
 
 ## 11. Risks
 
-- **Provider availability**: the gateway throttles bursts (free tier) and can fail
-  upstream. Mitigation: rate limit, retries, circuit breaker, `llm_fallback`, eval gate.
+- **Provider availability**: rate limits (TypeSafe: 1,200 req/min, adjusted
+  dynamically; the Vercel gateway free tier throttles bursts) and upstream failures. Mitigation: rate limit, retries, circuit breaker, `llm_fallback`, eval gate.
 - **Data exposure**: third party sees our state. Mitigation: redaction, minimal state.
-- **Version drift** on `typesafe-ai/jev` (no versioned ID is returned): log the
-  generation ID and upstream provider; re-run evals on change.
+- **Version drift** behind `jev-latest`: the audit log records the versioned ID the
+  API returns; re-run evals when it changes, or pin `JEV_MODEL` to a version.
 - **Over-trusting probabilities**: they are signals; deterministic policy stays
   authoritative for anything irreversible.
