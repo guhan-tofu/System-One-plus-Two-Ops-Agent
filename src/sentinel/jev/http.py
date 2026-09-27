@@ -1,7 +1,8 @@
-"""Shared HTTP machinery for HTTP Jev providers (currently Vercel AI Gateway).
+"""Shared HTTP machinery for HTTP Jev providers (official TypeSafe API, Vercel AI Gateway).
 
 - Retries 429/529 (plus any provider-specific `retry_statuses`), exponential
-  backoff with jitter, max 4 attempts.
+  backoff with jitter, max 4 attempts. A `retry-after` header lengthens the
+  wait (capped at `MAX_RETRY_AFTER_S`).
 - Auth failures, validation errors, other statuses, timeouts and transport
   errors fail immediately.
 - The API key is sent per request and never logged or put in exception text.
@@ -45,11 +46,28 @@ log = get_logger(__name__)
 
 DEFAULT_TIMEOUT = httpx.Timeout(10.0, connect=5.0)
 MAX_ATTEMPTS = 4
+MAX_RETRY_AFTER_S = 30.0
 _DETAIL_LIMIT = 300
 
 
+class wait_retry_after(wait_base):
+    """Backoff that waits at least as long as the provider's `retry-after`, capped."""
+
+    def __init__(self, backoff: wait_base, cap: float = MAX_RETRY_AFTER_S) -> None:
+        self._backoff = backoff
+        self._cap = cap
+
+    def __call__(self, retry_state: RetryCallState) -> float:
+        wait = self._backoff(retry_state)
+        exc = retry_state.outcome.exception() if retry_state.outcome else None
+        retry_after = getattr(exc, "retry_after", None)
+        if isinstance(retry_after, int | float):
+            wait = max(wait, min(float(retry_after), self._cap))
+        return wait
+
+
 def default_retry_wait() -> wait_base:
-    return wait_exponential_jitter(initial=0.5, max=8.0, jitter=0.5)
+    return wait_retry_after(wait_exponential_jitter(initial=0.5, max=8.0, jitter=0.5))
 
 
 class HTTPJevProvider(ABC):
@@ -172,10 +190,16 @@ class HTTPJevProvider(ABC):
             field, detail = _validation_detail(response)
             raise JevValidationError(f"HTTP {status}: {detail}", field=field)
         if status == 429:
-            raise JevRateLimitError("HTTP 429: rate limited", status_code=status)
+            raise JevRateLimitError(
+                "HTTP 429: rate limited",
+                status_code=status,
+                retry_after=_retry_after(response),
+            )
         if status in self.retry_statuses:
             raise JevOverloadedError(
-                _status_detail(status, response, "overloaded"), status_code=status
+                _status_detail(status, response, "overloaded"),
+                status_code=status,
+                retry_after=_retry_after(response),
             )
         raise JevHTTPError(_status_detail(status, response), status_code=status)
 
@@ -191,16 +215,33 @@ class HTTPJevProvider(ABC):
 
 
 def error_message(body: Any) -> str | None:
-    """Vendor error text from `{"message"}` or `{"error": {"message"} | str}`, truncated."""
+    """Vendor error text, truncated.
+
+    Handles `{"message"}`, `{"error": {"message"} | str}` (Vercel AI Gateway) and
+    `{"detail": {"message"} | str}` (official TypeSafe API).
+    """
     if not isinstance(body, Mapping):
         return None
     message = body.get("message")
-    error = body.get("error")
-    if isinstance(error, Mapping) and isinstance(error.get("message"), str):
-        message = error["message"]
-    elif isinstance(error, str):
-        message = error
+    for key in ("error", "detail"):
+        nested = body.get(key)
+        if isinstance(nested, Mapping) and isinstance(nested.get("message"), str):
+            message = nested["message"]
+        elif isinstance(nested, str):
+            message = nested
     return str(message)[:_DETAIL_LIMIT] if isinstance(message, str) and message else None
+
+
+def _retry_after(response: httpx.Response) -> float | None:
+    """`retry-after` in seconds (delta form only; HTTP dates are ignored)."""
+    value = response.headers.get("retry-after")
+    if value is None:
+        return None
+    try:
+        seconds = float(value)
+    except ValueError:
+        return None
+    return seconds if 0 <= seconds < float("inf") else None
 
 
 def _status_detail(status: int, response: httpx.Response, default: str | None = None) -> str:
@@ -227,7 +268,9 @@ def _validation_detail(response: httpx.Response) -> tuple[str | None, str]:
         for key in ("field", "param", "path", "loc"):
             value = obj.get(key)
             if isinstance(value, list):
-                field = ".".join(str(p) for p in value)
+                # FastAPI-style `loc` starts with where the field lives ("body").
+                parts = value[1:] if value[:1] == ["body"] and len(value) > 1 else value
+                field = ".".join(str(p) for p in parts)
             elif isinstance(value, str | int):
                 field = str(value)
             if field:

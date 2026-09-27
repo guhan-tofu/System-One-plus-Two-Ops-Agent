@@ -38,6 +38,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, ValidationError
 
 from sentinel.config import Settings
+from sentinel.jev.checks import check_distribution, probability
 from sentinel.jev.confidence import choice_confidence, score_confidence
 from sentinel.jev.errors import JevResponseError
 from sentinel.jev.http import HTTPJevProvider
@@ -89,20 +90,6 @@ def _wire_question(question: Question) -> dict[str, Any]:
     return body
 
 
-def _probability(qid: str, name: str, value: float) -> float:
-    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
-        raise JevResponseError(f"answer {qid!r}: {name} {value} is outside [0, 1]")
-    return value
-
-
-def _check_distribution(qid: str, probs: Mapping[str, float], allowed: list[str]) -> None:
-    unknown = sorted(set(probs) - set(allowed))
-    if unknown:
-        raise JevResponseError(f"answer {qid!r}: probabilities for unknown labels {unknown}")
-    for label, p in probs.items():
-        _probability(qid, f"probability for {label!r}", p)
-
-
 def _mapping(obj: Any, key: str) -> Mapping[str, Any]:
     value = obj.get(key) if isinstance(obj, Mapping) else None
     return value if isinstance(value, Mapping) else {}
@@ -128,7 +115,7 @@ def parse_answer(
                 raise JevResponseError(
                     f"answer {qid!r}: choice {choice.choice!r} is not one of the offered options"
                 )
-            _check_distribution(qid, choice.probabilities, options)
+            check_distribution(qid, choice.probabilities, options)
             probs = [choice.probabilities.get(o, 0.0) for o in options]
             return ChoiceAnswer(
                 type="choice",
@@ -139,7 +126,7 @@ def parse_answer(
         if isinstance(question, ScoreQuestion):
             score = _Score.model_validate(data)
             levels = [str(i) for i in range(len(question.criteria))]
-            _check_distribution(qid, score.probabilities, levels)
+            check_distribution(qid, score.probabilities, levels)
             if not 0 <= score.score <= len(levels) - 1:
                 raise JevResponseError(
                     f"answer {qid!r}: score {score.score} is outside the level range"
@@ -155,7 +142,7 @@ def parse_answer(
         if isinstance(question, NoulQuestion):
             boolean = _Boolean.model_validate(data)
             return NoulAnswer(
-                type="noul", noul=_probability(qid, "probability", boolean.probability)
+                type="noul", noul=probability(qid, "probability", boolean.probability)
             )
     except ValidationError as exc:
         fields = ", ".join(".".join(map(str, e["loc"])) or "<root>" for e in exc.errors())

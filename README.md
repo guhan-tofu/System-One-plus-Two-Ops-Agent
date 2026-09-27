@@ -9,7 +9,7 @@ It combines two kinds of model, and keeps code in charge of both:
 
 | | Role | Used for |
 |---|---|---|
-| **System One: Jev** (official TypeSafe `typesafe-ai/jev` via Vercel AI Gateway) | Fast, typed judgments with probabilities | Triage, model routing, "is this tool call safe?", "is this reply supported?" |
+| **System One: Jev** (the official TypeSafe Jev API) | Fast, typed judgments with probabilities | Triage, model routing, "is this tool call safe?", "is this reply supported?" |
 | **System Two: OpenAI** | Generation and reasoning | Drafting the reply and proposing tool calls |
 | **Code** | The final authority | State, redaction, policy, running tools, audit |
 
@@ -108,7 +108,7 @@ uv run pytest               # offline test suite (no real API calls)
 Minimum `.env`:
 
 ```sh
-AI_GATEWAY_API_KEY=...        # Vercel AI Gateway key (for Jev)
+JEV_API_KEY=...               # official TypeSafe Jev API key
 OPENAI_API_KEY=...
 OPENAI_MODEL_FAST=...         # e.g. a small current model, pinned to a dated ID
 OPENAI_MODEL_STRONG=...       # e.g. a capable current model
@@ -138,7 +138,7 @@ and run, and the end result. When actions are held for approval you can
 
 The demo accounts (`cus_1001`, `cus_1002`) and their charges are mock data that reset
 when the server restarts. Set `JEV_ON_FAILURE=llm_fallback` if you want the demo to
-keep working when the Jev gateway is busy. The page then marks those steps as
+keep working when Jev is unavailable. The page then marks those steps as
 "Jev stand-in (OpenAI)".
 
 ### Command line
@@ -209,10 +209,13 @@ Secrets are only supplied at runtime.
 
 | Setting | Default | Purpose |
 |---|---|---|
-| `JEV_PROVIDER` | `vercel` | `vercel` (official Jev), `llm_fallback` (OpenAI emulation), or `typesafe` (direct API stub) |
-| `JEV_GATEWAY_MODEL` | `typesafe-ai/jev` | Jev model on the gateway |
+| `JEV_PROVIDER` | `typesafe` | `typesafe` (official Jev API), `vercel` (the same Jev via Vercel AI Gateway, needs `AI_GATEWAY_API_KEY`), or `llm_fallback` (OpenAI emulation) |
+| `JEV_API_KEY` | none | Official TypeSafe Jev API key |
+| `JEV_MODEL` | `jev-latest` | Alias (`jev-latest`, `jev-preview`) or pinned version (e.g. `jev-1.13.0`); the audit records the versioned ID the API returns |
+| `JEV_BASE_URL` | `https://api.typesafe.ai/v1/systemone` | Jev endpoint |
+| `JEV_GATEWAY_MODEL` | `typesafe-ai/jev` | Jev model when `JEV_PROVIDER=vercel` |
 | `JEV_ON_FAILURE` | `human` | When Jev fails: `human` (escalate) or `llm_fallback` (retry on OpenAI emulation) |
-| `JEV_MAX_RPS` | `2` | Client-side cap on Jev requests per second (the gateway free tier throttles at about 3) |
+| `JEV_MAX_RPS` | `10` | Client-side cap on Jev requests per second (TypeSafe allows about 20; use about 2 for the Vercel free tier) |
 | `JEV_BREAKER_FAILURES` / `JEV_BREAKER_RESET_S` | `5` / `30` | Circuit breaker: failures before failing fast, and the cool-down |
 | `OPENAI_MODEL_FAST` / `OPENAI_MODEL_STRONG` | none | Models behind the two tiers |
 | `DATABASE_URL` | `sqlite:///./sentinel.db` | Audit log, review queue and items |
@@ -223,7 +226,7 @@ Secrets are only supplied at runtime.
 path, abusive). This command:
 
 ```sh
-uv run sentinel eval -p vercel -p llm_fallback --rate 1
+uv run sentinel eval -p typesafe -p llm_fallback
 ```
 
 compares providers side by side and writes a markdown report to `evals/reports/`.
@@ -233,8 +236,8 @@ The report covers:
 - what the triage policy would do: how many items proceed, whether items that need
   a human reach one, and how many are escalated unnecessarily.
 
-Tune thresholds from these reports, not by feel. `--rate` keeps under the gateway's
-free-tier limit.
+Tune thresholds from these reports, not by feel. Add `-p vercel --rate 1` to compare
+the Vercel AI Gateway route too (`--rate` keeps under its free-tier limit).
 
 ## Safety properties (and the tests that hold them)
 
@@ -248,7 +251,7 @@ free-tier limit.
   close an account; refund above the limit; refund another customer's charge; smuggle
   a `customer_id` argument; or get an unsupported reply sent. Live tests confirm that
   injected text doesn't change Jev's routing (`test_live_injection.py`).
-- **Every decision is audited** with the model ID, the gateway's generation ID,
+- **Every decision is audited** with the versioned model ID Jev and OpenAI return,
   latency and cost. If an audit write fails, the pipeline stops.
 
 ## Development
@@ -272,7 +275,7 @@ Conventions (from `CLAUDE.md`):
 ```
 src/sentinel/
   agent/     pipeline stages: state, triage, routing, generate, guard, verify, pipeline
-  jev/       Jev providers (vercel, llm_fallback), models, questions, confidence, resilience
+  jev/       Jev providers (typesafe, vercel, llm_fallback), models, questions, confidence, resilience
   llm/       OpenAI client (tiered generation, structured output) and pricing
   tools/     tool registry and mock built-in tools (lookup_customer, issue_refund, close_account)
   policy/    YAML policy engine (thresholds, tool rules)
@@ -294,5 +297,7 @@ evals/       datasets/ (committed) and reports/ (git-ignored)
   resumed after a restart.
 - **No product-knowledge source:** how-to questions usually escalate, because verify
   has nothing to check product claims against.
-- **The gateway returns no versioned Jev model ID**, so audits record the requested
-  model with `model_verified=false`, plus the generation ID.
+- **With `JEV_PROVIDER=vercel` there is no versioned Jev model ID**: the gateway
+  doesn't return one, so audits record the requested model with
+  `model_verified=false`, plus the gateway's generation ID. The default `typesafe`
+  provider returns the versioned ID.

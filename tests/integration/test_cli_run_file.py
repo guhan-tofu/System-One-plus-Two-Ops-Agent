@@ -12,7 +12,7 @@ from typer.testing import CliRunner
 from sentinel.cli import app
 from tests.fixtures.openai import RESPONSES_URL, response_body
 from tests.fixtures.pipeline import draft_json
-from tests.fixtures.vercel import EVAL_URL, GATEWAY_URL, answer_request
+from tests.fixtures.typesafe import API_URL, MODEL_VERSION, answer_request
 
 FAKE_KEY = "fake-key-for-cli-tests"  # pragma: allowlist secret
 SAMPLES = Path(__file__).parents[2] / "samples"
@@ -23,8 +23,8 @@ DRAFT = "Thanks, our billing team will look into the duplicate charge."
 def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
     db = tmp_path / "audit.db"
     for var, value in {
-        "AI_GATEWAY_API_KEY": FAKE_KEY,
-        "AI_GATEWAY_BASE_URL": GATEWAY_URL,
+        "JEV_API_KEY": FAKE_KEY,
+        "JEV_BASE_URL": API_URL,
         "OPENAI_API_KEY": FAKE_KEY,
         "OPENAI_MODEL_FAST": "fake-fast",
         "OPENAI_MODEL_STRONG": "fake-strong",
@@ -35,19 +35,19 @@ def _env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
 
 
 def jev_answer(request: httpx.Request, triage_path: str = "lookup") -> httpx.Response:
-    """Official Jev via the gateway: billing, the given path, strong tier, supported claim."""
+    """Official TypeSafe Jev: billing, the given path, strong tier, supported claim."""
     return answer_request(
         request,
         picks={"category": "billing", "path": triage_path, "tier": "strong",
                "task_status": "complete"},
-        boolean={"is_abusive": 0.01, "claim_supported": 0.95},
+        noul={"is_abusive": 0.01, "claim_supported": 0.95},
         p=0.96,
     )  # fmt: skip
 
 
 @respx.mock
 def test_run_file_prints_full_trace(_env: Path) -> None:
-    respx.post(EVAL_URL).mock(side_effect=jev_answer)
+    respx.post(API_URL).mock(side_effect=jev_answer)
     respx.post(RESPONSES_URL).respond(
         200, json=response_body(draft_json(DRAFT), model="fake-strong-2026")
     )
@@ -61,7 +61,7 @@ def test_run_file_prints_full_trace(_env: Path) -> None:
     ):  # fmt: skip
         assert f"[{stage:<11}]" in out
     assert "category=billing (0.95)" in out
-    assert "vercel:typesafe-ai/jev (unverified)" in out
+    assert f"typesafe:{MODEL_VERSION}" in out and "(unverified)" not in out
     assert "lookup_customer found=True" in out
     assert "tier=strong" in out
     assert "openai:fake-strong-2026" in out
@@ -71,12 +71,12 @@ def test_run_file_prints_full_trace(_env: Path) -> None:
 
     rows = sqlite3.connect(_env).execute("select stage, model from audit_events").fetchall()
     assert [r[0] for r in rows][-1] == "decide"
-    assert ("triage", "typesafe-ai/jev") in rows and ("generate", "fake-strong-2026") in rows
+    assert ("triage", MODEL_VERSION) in rows and ("generate", "fake-strong-2026") in rows
 
 
 @respx.mock
 def test_run_file_json_output() -> None:
-    respx.post(EVAL_URL).mock(side_effect=lambda r: jev_answer(r, triage_path="human"))
+    respx.post(API_URL).mock(side_effect=lambda r: jev_answer(r, triage_path="human"))
     result = CliRunner().invoke(app, ["run-file", "--json", str(SAMPLES / "ticket.json")])
     assert result.exit_code == 0, result.output
     outcome = json.loads(result.stdout)

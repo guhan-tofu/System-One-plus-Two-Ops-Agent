@@ -25,12 +25,18 @@ class Settings(BaseSettings):
         extra="ignore",
     )
 
-    # Default: official TypeSafe Jev via Vercel AI Gateway.
+    # Default: the official TypeSafe Jev API.
+    jev_api_key: SecretStr = SecretStr("")
+    jev_base_url: str = "https://api.typesafe.ai/v1/systemone"
+    jev_model: str = "jev-latest"
+    """Alias or pinned version; the versioned ID the API returns is what gets audited."""
+
+    # Alternative: the same Jev via Vercel AI Gateway (JEV_PROVIDER=vercel).
     ai_gateway_api_key: SecretStr = SecretStr("")
     ai_gateway_base_url: str = "https://ai-gateway.vercel.sh/v4/ai"
     jev_gateway_model: str = "typesafe-ai/jev"
 
-    jev_provider: JevProviderName = "vercel"
+    jev_provider: JevProviderName = "typesafe"
 
     openai_api_key: SecretStr = SecretStr("")
     openai_model_fast: str = ""
@@ -40,8 +46,9 @@ class Settings(BaseSettings):
 
     jev_fallback_tier: LLMTier = "fast"
     """OpenAI tier used when JEV_PROVIDER=llm_fallback emulates Jev."""
-    jev_max_rps: float | None = 2.0
-    """Client-side cap on Jev requests/second (Vercel free tier throttles ~3 req/s)."""
+    jev_max_rps: float | None = 10.0
+    """Client-side cap on Jev requests/second (the TypeSafe API allows ~20/s; set
+    ~2 for the Vercel AI Gateway free tier)."""
     jev_breaker_failures: int = 5
     """Consecutive transient Jev failures that open the circuit breaker."""
     jev_breaker_reset_s: float = 30.0

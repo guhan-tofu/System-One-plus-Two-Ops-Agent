@@ -30,6 +30,7 @@ from sentinel.jev.models import ChoiceQuestion, JevResult, ScoreQuestion
 from sentinel.jev.provider import JevProvider, build_provider
 from tests.fixtures.jev import QUESTIONS
 from tests.fixtures.openai import FAST_RETRY, RESPONSES_URL, error_body, judge, response_body
+from tests.fixtures.typesafe import API_URL, api_error, api_response
 from tests.fixtures.vercel import EVAL_URL, GATEWAY_URL, gateway_error, gateway_response
 
 FAKE_KEY = "fake-key-for-contract-tests"  # pragma: allowlist secret
@@ -43,27 +44,44 @@ class Backend:
     key_var: str
 
     def ok(self) -> Any:
+        if self.name == "typesafe":
+            return httpx.Response(200, json=api_response())
         if self.name == "vercel":
             return httpx.Response(200, json=gateway_response())
         return judge
 
     def status(self, code: int) -> httpx.Response:
+        if self.name == "typesafe":
+            return httpx.Response(code, json=api_error("error", "error"))
         if self.name == "vercel":
             return httpx.Response(code, json=gateway_error("error", "error"))
         return httpx.Response(code, headers=FAST_RETRY, json=error_body("error"))
 
     def invalid(self, field: str) -> httpx.Response:
+        if self.name == "typesafe":
+            loc = ["body", *field.split(".")]
+            return httpx.Response(
+                422, json={"detail": [{"loc": loc, "msg": "bad", "type": "value_error"}]}
+            )
         if self.name == "vercel":
             return httpx.Response(400, json={"error": {"message": "bad", "param": field}})
         return httpx.Response(400, json=error_body("bad", param=field))
 
     def garbage(self) -> httpx.Response:
+        if self.name == "typesafe":
+            return httpx.Response(200, json={"detail": "not an evaluation"})
         if self.name == "vercel":
             return httpx.Response(200, json={"error": "not an evaluation"})
         return httpx.Response(200, json=response_body("not json"))
 
 
 BACKENDS = {
+    "typesafe": Backend(
+        name="typesafe",
+        url=API_URL,
+        env={"JEV_API_KEY": FAKE_KEY, "JEV_BASE_URL": API_URL},
+        key_var="JEV_API_KEY",
+    ),
     "vercel": Backend(
         name="vercel",
         url=EVAL_URL,

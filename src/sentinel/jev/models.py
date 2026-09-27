@@ -1,7 +1,8 @@
 """Request/response models for Jev (System One).
 
 `JevRequest` holds what we ask; each provider maps it to its own wire format
-(see `sentinel.jev.vercel` for the official Jev via Vercel AI Gateway).
+(the official TypeSafe API takes these models as they are; see `sentinel.jev.vercel`
+for the Vercel AI Gateway mapping).
 `JevResult` is the provider-independent answer the pipeline consumes.
 """
 
@@ -118,11 +119,12 @@ class JevResult(BaseModel):
     model_config = ConfigDict(frozen=True)
 
     provider: str
-    """Which JevProvider answered, e.g. "vercel" or "llm_fallback"."""
+    """Which JevProvider answered, e.g. "typesafe", "vercel" or "llm_fallback"."""
     model: str
     """Model ID to audit: the vendor's if it returned one, else the one we requested."""
     model_verified: bool
-    """True only if the provider reported a versioned model ID (Vercel AI Gateway does not)."""
+    """True only if the provider reported a versioned model ID (TypeSafe does; Vercel
+    AI Gateway does not)."""
     answers: dict[str, Answer]
     usage: dict[str, Any] | None = None
     latency_ms: float

@@ -26,8 +26,10 @@ class JevValidationError(JevError):
 class JevRetryableError(JevError):
     """A transient failure we retry with backoff (429, 529)."""
 
-    def __init__(self, message: str, *, status_code: int) -> None:
+    def __init__(self, message: str, *, status_code: int, retry_after: float | None = None) -> None:
         self.status_code = status_code
+        self.retry_after = retry_after
+        """Seconds the provider asked us to wait (`retry-after` header), if any."""
         super().__init__(message)
 
 
