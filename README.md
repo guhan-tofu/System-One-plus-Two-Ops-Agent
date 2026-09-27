@@ -15,6 +15,9 @@ It combines two kinds of model, and keeps code in charge of both:
 
 > Jev decides which path, the LLM does the work, code pulls the trigger.
 
+<img width="1330" height="2301" alt="image" src="https://github.com/user-attachments/assets/12739f54-ff7c-40b6-a377-2c2a53e9aaf2" />
+
+
 ## How it works
 
 Every item goes through the same pipeline. Each stage is written to an audit log as
